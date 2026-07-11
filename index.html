@@ -176,8 +176,20 @@
     80%{transform:rotate(-6deg) scale(1.12);}
     100%{transform:rotate(0) scale(1);}
   }
-  #pullBtn{width:100%;}
-  #pullHint{text-align:center;font-size:13px;font-weight:700;color:#6b7f8e;margin-top:8px;}
+  #pullRow{display:flex;gap:8px;}
+  #pullRow .btn{flex:1;padding-left:6px;padding-right:6px;}
+  #pull10Btn{background:#9B7BFF;color:#fff;}
+  #oddsLine{text-align:center;font-size:11.5px;font-weight:800;color:#8093a0;margin-top:9px;}
+  #pullHint{text-align:center;font-size:12.5px;font-weight:700;color:#6b7f8e;margin-top:6px;}
+  #dexBar{font-weight:900;font-size:14px;background:#FFF3D6;border:2.5px solid var(--ink);
+    border-radius:12px;padding:8px 12px;text-align:center;margin-bottom:8px;}
+  #multiReveal{margin-top:12px;background:#fff;border:3px solid var(--ink);border-radius:16px;padding:12px 10px;}
+  #multiReveal .mrTitle{font-weight:900;font-size:14px;text-align:center;margin-bottom:9px;}
+  #multiReveal .mrGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+  #multiReveal .mrItem{text-align:center;border:2.5px solid var(--ink);border-radius:11px;padding:5px 2px 3px;background:#fff;}
+  #multiReveal .mrItem .mre{font-size:23px;line-height:1.1;}
+  #multiReveal .mrItem .mrn{font-size:8.5px;font-weight:800;color:var(--ink);}
+  #multiReveal .mrItem .mrNew{font-size:8px;font-weight:900;color:#3ECF8E;}
   #revealCard{margin-top:12px;padding:16px;text-align:center;border-width:4px;}
   #revealCard .rEmoji{font-size:60px;line-height:1.1;}
   #revealCard .rName{font-size:21px;font-weight:900;margin-top:2px;}
@@ -186,11 +198,13 @@
   #revealCard .rSub{font-size:13px;font-weight:700;color:#6b7f8e;margin:6px 0 10px;}
   .invTitle{font-weight:900;font-size:16px;margin:14px 0 8px;}
   .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
-  .cell{background:#fff;border:2.5px solid var(--ink);border-radius:14px;padding:8px 2px 6px;
+  .cell{position:relative;background:#fff;border:2.5px solid var(--ink);border-radius:14px;padding:8px 2px 5px;
     text-align:center;cursor:pointer;font-family:inherit;box-shadow:0 3px 0 var(--ink);}
   .cell:active{transform:translateY(2px);box-shadow:0 1px 0 var(--ink);}
   .cell .ce{font-size:26px;line-height:1.2;}
   .cell .cn{font-size:11px;font-weight:800;margin-top:2px;color:var(--ink);}
+  .cell .cr{font-size:9px;font-weight:900;margin-top:1px;}
+  .cell .rdot{position:absolute;top:5px;right:5px;width:10px;height:10px;border-radius:50%;border:2px solid var(--ink);}
   .cell.locked{background:#E7EDF1;opacity:.75;}
   .cell.equipped{border-color:var(--coral);box-shadow:0 3px 0 var(--coral);background:#FFF1EE;}
 
@@ -272,7 +286,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.5</div>
+    <div id="verTag">v3.6</div>
   </div>
 </div>
 
@@ -302,10 +316,16 @@
       <span id="shopWallet">🪙 0</span>
     </div>
     <div id="capsuleBox"><div id="capsule">🎁</div></div>
-    <button class="btn primary" id="pullBtn">뽑기! (10 🪙)</button>
-    <div id="pullHint">모험에서 동전을 모아 멋진 아이템을 뽑아봐!</div>
+    <div id="pullRow">
+      <button class="btn primary" id="pullBtn">뽑기! (10 🪙)</button>
+      <button class="btn" id="pull10Btn">10연차! (90 🪙)</button>
+    </div>
+    <div id="oddsLine"></div>
+    <div id="pullHint">모험에서 동전을 모아 멋진 아이템을 뽑아봐! (10연차는 에픽 이상 1개 보장 🎁)</div>
     <div id="revealCard" class="card hidden"></div>
+    <div id="multiReveal" class="hidden"></div>
     <div id="invWrap">
+      <div id="dexBar"></div>
       <div class="invTitle">🧢 모자 <span id="cntHat"></span></div>
       <div class="grid" id="gridHat"></div>
       <div class="invTitle">🐾 펫 <span id="cntPet"></span></div>
@@ -387,6 +407,7 @@ const sfx = {
 
 // ---------- 아이템 & 뽑기 ----------
 const PULL_COST = 10;
+const PULL10_COST = 90;   // 10연차(에픽 이상 1개 보장) — 낱개보다 10 저렴
 const RAR = {
   c:{ n:'보통', col:'#8FA3B0', w:55 },
   r:{ n:'레어', col:'#4A90F4', w:28 },
@@ -395,25 +416,42 @@ const RAR = {
 };
 const REFUND = { c:3, r:5, e:8, l:15 };
 const REGISTRY = [
-  { id:'shirt_red',    cat:'shirt', name:'빨강 셔츠', emoji:'👕', rarity:'c', color:0xE05555 },
-  { id:'shirt_pink',   cat:'shirt', name:'분홍 셔츠', emoji:'👕', rarity:'c', color:0xFF8FB1 },
-  { id:'shirt_purple', cat:'shirt', name:'보라 셔츠', emoji:'👕', rarity:'c', color:0x9B7BFF },
-  { id:'shirt_orange', cat:'shirt', name:'주황 셔츠', emoji:'👕', rarity:'c', color:0xFFA24C },
-  { id:'shirt_sky',    cat:'shirt', name:'하늘 셔츠', emoji:'👕', rarity:'c', color:0x6FC1E8 },
-  { id:'hat_cap',    cat:'hat', name:'야구모자',    emoji:'🧢', rarity:'r' },
-  { id:'hat_straw',  cat:'hat', name:'밀짚모자',    emoji:'👒', rarity:'r' },
-  { id:'hat_ribbon', cat:'hat', name:'리본',        emoji:'🎀', rarity:'r' },
-  { id:'pet_chick',  cat:'pet', name:'병아리',      emoji:'🐤', rarity:'r', amp:0.12 },
-  { id:'hat_wizard', cat:'hat', name:'마법사 모자',  emoji:'🎩', rarity:'e' },
-  { id:'hat_crown',  cat:'hat', name:'왕관',        emoji:'👑', rarity:'e' },
-  { id:'pet_puppy',  cat:'pet', name:'강아지',      emoji:'🐶', rarity:'e', amp:0.12 },
-  { id:'pet_kitty',  cat:'pet', name:'고양이',      emoji:'🐱', rarity:'e', amp:0.12 },
-  { id:'pet_bunny',  cat:'pet', name:'토끼',        emoji:'🐰', rarity:'e', amp:0.15 },
-  { id:'pet_ghost',  cat:'pet', name:'꼬마 유령',   emoji:'👻', rarity:'e', amp:0.24 },
-  { id:'hat_uni',    cat:'hat', name:'유니콘 뿔',   emoji:'🦄', rarity:'l' },
-  { id:'hat_halo',   cat:'hat', name:'천사 링',     emoji:'😇', rarity:'l' },
-  { id:'pet_dragon', cat:'pet', name:'아기 드래곤',  emoji:'🐲', rarity:'l', amp:0.16 },
-  { id:'pet_star',   cat:'pet', name:'별똥이',      emoji:'⭐', rarity:'l', amp:0.16, spin:true }
+  // 👕 셔츠 (몸 색)
+  { id:'shirt_red',    cat:'shirt', name:'빨강 셔츠',   emoji:'👕', rarity:'c', color:0xE05555, desc:'용감한 빨강' },
+  { id:'shirt_orange', cat:'shirt', name:'주황 셔츠',   emoji:'👕', rarity:'c', color:0xFFA24C, desc:'따뜻한 주황' },
+  { id:'shirt_yellow', cat:'shirt', name:'노랑 셔츠',   emoji:'👕', rarity:'c', color:0xFFD24C, desc:'반짝 노랑' },
+  { id:'shirt_green',  cat:'shirt', name:'초록 셔츠',   emoji:'👕', rarity:'c', color:0x63C96E, desc:'싱그러운 초록' },
+  { id:'shirt_mint',   cat:'shirt', name:'민트 셔츠',   emoji:'👕', rarity:'c', color:0x5CD6C0, desc:'상큼한 민트' },
+  { id:'shirt_sky',    cat:'shirt', name:'하늘 셔츠',   emoji:'👕', rarity:'c', color:0x6FC1E8, desc:'시원한 하늘' },
+  { id:'shirt_navy',   cat:'shirt', name:'남색 셔츠',   emoji:'👕', rarity:'c', color:0x3A4A7A, desc:'멋진 남색' },
+  { id:'shirt_purple', cat:'shirt', name:'보라 셔츠',   emoji:'👕', rarity:'c', color:0x9B7BFF, desc:'신비한 보라' },
+  { id:'shirt_pink',   cat:'shirt', name:'분홍 셔츠',   emoji:'👕', rarity:'c', color:0xFF8FB1, desc:'상냥한 분홍' },
+  { id:'shirt_peach',  cat:'shirt', name:'복숭아 셔츠', emoji:'👕', rarity:'c', color:0xFFB39C, desc:'말랑 복숭아' },
+  // 🧢 모자
+  { id:'hat_cap',    cat:'hat', name:'야구모자',   emoji:'🧢', rarity:'r', desc:'달리기 좋은 모자' },
+  { id:'hat_straw',  cat:'hat', name:'밀짚모자',   emoji:'👒', rarity:'r', desc:'여름 밀짚모자' },
+  { id:'hat_ribbon', cat:'hat', name:'리본',       emoji:'🎀', rarity:'r', desc:'깜찍한 리본' },
+  { id:'hat_beanie', cat:'hat', name:'방울 비니',  emoji:'🧶', rarity:'r', desc:'포근한 방울 비니' },
+  { id:'hat_party',  cat:'hat', name:'파티 고깔',  emoji:'🎉', rarity:'e', desc:'파티 시작!' },
+  { id:'hat_flower', cat:'hat', name:'꽃 머리띠',  emoji:'🌷', rarity:'e', desc:'꽃 한 송이' },
+  { id:'hat_wizard', cat:'hat', name:'마법사 모자', emoji:'🎩', rarity:'e', desc:'마법을 부려요' },
+  { id:'hat_crown',  cat:'hat', name:'왕관',       emoji:'👑', rarity:'e', desc:'반짝이는 왕관' },
+  { id:'hat_uni',    cat:'hat', name:'유니콘 뿔',  emoji:'🦄', rarity:'l', desc:'유니콘의 뿔' },
+  { id:'hat_star',   cat:'hat', name:'별 머리띠',  emoji:'🌟', rarity:'l', desc:'별을 머리에!' },
+  { id:'hat_halo',   cat:'hat', name:'천사 링',    emoji:'😇', rarity:'l', desc:'천사의 링' },
+  // 🐾 펫 (따라다녀요)
+  { id:'pet_chick',   cat:'pet', name:'병아리',     emoji:'🐤', rarity:'r', amp:0.12, desc:'삐약삐약 병아리' },
+  { id:'pet_penguin', cat:'pet', name:'펭귄',       emoji:'🐧', rarity:'r', amp:0.10, desc:'뒤뚱뒤뚱 펭귄' },
+  { id:'pet_frog',    cat:'pet', name:'개구리',     emoji:'🐸', rarity:'r', amp:0.18, desc:'폴짝 개구리' },
+  { id:'pet_puppy',   cat:'pet', name:'강아지',     emoji:'🐶', rarity:'e', amp:0.12, desc:'멍멍 강아지' },
+  { id:'pet_kitty',   cat:'pet', name:'고양이',     emoji:'🐱', rarity:'e', amp:0.12, desc:'야옹 고양이' },
+  { id:'pet_bunny',   cat:'pet', name:'토끼',       emoji:'🐰', rarity:'e', amp:0.15, desc:'깡총 토끼' },
+  { id:'pet_bear',    cat:'pet', name:'곰',         emoji:'🐻', rarity:'e', amp:0.10, desc:'어슬렁 곰' },
+  { id:'pet_robot',   cat:'pet', name:'로봇',       emoji:'🤖', rarity:'e', amp:0.08, desc:'삐빅 로봇' },
+  { id:'pet_ghost',   cat:'pet', name:'꼬마 유령',  emoji:'👻', rarity:'e', amp:0.24, desc:'둥실 꼬마 유령' },
+  { id:'pet_dragon',  cat:'pet', name:'아기 드래곤', emoji:'🐲', rarity:'l', amp:0.16, desc:'아기 드래곤' },
+  { id:'pet_dino',    cat:'pet', name:'아기 공룡',   emoji:'🦖', rarity:'l', amp:0.14, desc:'쿵쿵 아기 공룡' },
+  { id:'pet_star',    cat:'pet', name:'별똥이',     emoji:'⭐', rarity:'l', amp:0.16, spin:true, desc:'반짝 별똥이' }
 ];
 function itemById(id){ return REGISTRY.find(x=>x.id===id) || null; }
 
@@ -530,6 +568,24 @@ function buildHat(id, g){
     mk(g, new THREE.ConeGeometry(0.11,0.55,10), 0xFF9FF3, 0,0.3,-0.18, -0.45);
   } else if(id === 'hat_halo'){
     mk(g, new THREE.TorusGeometry(0.34,0.055,10,22), 0xFFD75E, 0,0.5,0, Math.PI/2);
+  } else if(id === 'hat_beanie'){
+    mk(g, new THREE.SphereGeometry(0.46,14,8,0,Math.PI*2,0,Math.PI/2), 0xE0556B, 0,0.05,0);
+    mk(g, new THREE.CylinderGeometry(0.47,0.47,0.14,16), 0xF07A8C, 0,0.06,0);
+    mk(g, new THREE.SphereGeometry(0.12,10,10), 0xFFF1F3, 0,0.52,0);
+  } else if(id === 'hat_party'){
+    mk(g, new THREE.ConeGeometry(0.42,1.0,16), 0x59C1E8, 0,0.5,0);
+    mk(g, new THREE.TorusGeometry(0.3,0.05,8,16), 0xFFD75E, 0,0.28,0, Math.PI/2);
+    mk(g, new THREE.SphereGeometry(0.11,10,10), 0xFF7FB0, 0,1.02,0);
+  } else if(id === 'hat_flower'){
+    mk(g, new THREE.TorusGeometry(0.42,0.045,8,20), 0xEFB8C8, 0,0.12,0, Math.PI/2);
+    const cx=0, cy=0.34, cz=-0.34;
+    mk(g, new THREE.CylinderGeometry(0.09,0.09,0.06,10), 0xFFD75E, cx,cy,cz);
+    for(let i=0;i<5;i++){ const a=i*Math.PI*2/5; mk(g, new THREE.SphereGeometry(0.1,8,6), 0xFF7FB0, cx+Math.cos(a)*0.16, cy+Math.sin(a)*0.16, cz); }
+  } else if(id === 'hat_star'){
+    mk(g, new THREE.TorusGeometry(0.42,0.045,8,20), 0xFFE08A, 0,0.12,0, Math.PI/2);
+    mk(g, new THREE.CylinderGeometry(0.02,0.02,0.3,6), 0xFFD75E, 0,0.42,-0.3);
+    const st = mk(g, new THREE.OctahedronGeometry(0.17), 0xFFD24C, 0,0.64,-0.3);
+    st.scale.set(1,1,0.4);
   }
 }
 function buildPet(id, g){
@@ -570,6 +626,40 @@ function buildPet(id, g){
   } else if(id === 'pet_star'){
     mk(g, new THREE.OctahedronGeometry(0.36), 0xFFD75E, 0,0.42,0);
     mk(g, new THREE.OctahedronGeometry(0.16), 0xFFF1B8, 0,0.42,0);
+  } else if(id === 'pet_penguin'){
+    mk(g, new THREE.BoxGeometry(0.5,0.6,0.44), 0x2E3A46, 0,0.36,0);
+    mk(g, new THREE.BoxGeometry(0.32,0.44,0.1), 0xF4F8FB, 0,0.32,0.2);
+    mk(g, new THREE.ConeGeometry(0.07,0.16,8), 0xFF9A3C, 0,0.4,-0.24, -Math.PI/2);
+    mk(g, new THREE.BoxGeometry(0.08,0.1,0.05), 0xF4F8FB, -0.12,0.5,-0.2);
+    mk(g, new THREE.BoxGeometry(0.08,0.1,0.05), 0xF4F8FB,  0.12,0.5,-0.2);
+  } else if(id === 'pet_frog'){
+    mk(g, new THREE.BoxGeometry(0.58,0.4,0.5), 0x5CC46A, 0,0.24,0);
+    mk(g, new THREE.SphereGeometry(0.14,10,10), 0x5CC46A, -0.17,0.5,-0.08);
+    mk(g, new THREE.SphereGeometry(0.14,10,10), 0x5CC46A,  0.17,0.5,-0.08);
+    mk(g, new THREE.SphereGeometry(0.07,8,8), 0xffffff, -0.17,0.54,-0.19);
+    mk(g, new THREE.SphereGeometry(0.07,8,8), 0xffffff,  0.17,0.54,-0.19);
+    mk(g, new THREE.SphereGeometry(0.035,6,6), 0x1A1A1A, -0.17,0.54,-0.25);
+    mk(g, new THREE.SphereGeometry(0.035,6,6), 0x1A1A1A,  0.17,0.54,-0.25);
+  } else if(id === 'pet_bear'){
+    mk(g, new THREE.BoxGeometry(0.56,0.42,0.5), 0xB07A4A, 0,0.24,0);
+    mk(g, new THREE.BoxGeometry(0.42,0.4,0.36), 0xB07A4A, 0,0.54,-0.3);
+    mk(g, new THREE.SphereGeometry(0.12,10,10), 0x8A5E38, -0.18,0.76,-0.3);
+    mk(g, new THREE.SphereGeometry(0.12,10,10), 0x8A5E38,  0.18,0.76,-0.3);
+    mk(g, new THREE.BoxGeometry(0.16,0.12,0.08), 0xE8C9A8, 0,0.48,-0.5);
+  } else if(id === 'pet_robot'){
+    mk(g, new THREE.BoxGeometry(0.5,0.5,0.44), 0x9AA7B4, 0,0.32,0);
+    mk(g, new THREE.BoxGeometry(0.4,0.34,0.3), 0xB8C4CF, 0,0.62,-0.28);
+    mk(g, new THREE.CylinderGeometry(0.02,0.02,0.16,6), 0x7E8894, 0,0.86,-0.28);
+    mk(g, new THREE.SphereGeometry(0.05,8,8), 0xFF6B5E, 0,0.96,-0.28);
+    mk(g, new THREE.BoxGeometry(0.09,0.09,0.05), 0x59C1E8, -0.1,0.64,-0.44);
+    mk(g, new THREE.BoxGeometry(0.09,0.09,0.05), 0x59C1E8,  0.1,0.64,-0.44);
+  } else if(id === 'pet_dino'){
+    mk(g, new THREE.BoxGeometry(0.56,0.46,0.6), 0x6BBF59, 0,0.28,0);
+    mk(g, new THREE.BoxGeometry(0.42,0.42,0.44), 0x6BBF59, 0,0.5,-0.34);
+    mk(g, new THREE.BoxGeometry(0.32,0.12,0.12), 0x4FA84A, 0,0.42,-0.6);
+    for(let i=0;i<3;i++){ mk(g, new THREE.ConeGeometry(0.09,0.18,4), 0xFFD24C, 0,0.58,-0.02+i*0.2); }
+    mk(g, new THREE.BoxGeometry(0.09,0.09,0.05), 0xffffff, -0.13,0.58,-0.55);
+    mk(g, new THREE.BoxGeometry(0.09,0.09,0.05), 0xffffff,  0.13,0.58,-0.55);
   }
 }
 function applyEquips(){
@@ -601,11 +691,16 @@ function rollItem(){
   }
   return pick(REGISTRY.filter(x=>x.rarity===rk));
 }
+function oddsText(){
+  const total = Object.keys(RAR).reduce((s,k)=>s+RAR[k].w, 0);
+  return Object.keys(RAR).map(k=> RAR[k].n + ' ' + Math.round(RAR[k].w/total*100) + '%').join(' · ');
+}
 function updateWallet(){
   const t = '🪙 ' + coinCount;
   el('walletCoins').textContent = t;
   el('shopWallet').textContent = t;
   el('pullBtn').disabled = pulling || coinCount < PULL_COST;
+  el('pull10Btn').disabled = pulling || coinCount < PULL10_COST;
   updateHUD();
 }
 function renderCat(cat, gridId, cntId){
@@ -616,16 +711,20 @@ function renderCat(cat, gridId, cntId){
   items.forEach(it=>{
     const has = owned.has(it.id);
     if(has) cnt++;
+    const r = RAR[it.rarity];
     const b = document.createElement('button');
     b.className = 'cell' + (has ? '' : ' locked') + (equip[cat]===it.id ? ' equipped' : '');
-    b.innerHTML = '<div class="ce">' + (has ? it.emoji : '❓') + '</div>' +
-                  '<div class="cn">' + (has ? it.name : '???') + '</div>';
+    b.innerHTML = '<div class="rdot" style="background:' + r.col + '"></div>' +
+                  '<div class="ce">' + (has ? it.emoji : '❓') + '</div>' +
+                  '<div class="cn">' + (has ? it.name : '???') + '</div>' +
+                  '<div class="cr" style="color:' + r.col + '">' + (has ? r.n : '') + '</div>';
     b.addEventListener('click', ()=>{
       audioInit();
-      if(!has){ toast('뽑기로 얻을 수 있어! 🎁', 1000); return; }
+      if(!has){ toast('🎁 ' + r.n + ' · ' + (it.desc || '') + ' — 뽑기로 얻어봐!', 1400); return; }
       equip[cat] = (equip[cat] === it.id) ? null : it.id;
       applyEquips(); markDirty(); saveProfile();
       tone(700, 0.08, 'sine', 0.1);
+      toast(equip[cat] ? (it.name + ' 장착! ✨') : (it.name + ' 벗었어'), 1000);
       renderShop();
     });
     grid.appendChild(b);
@@ -636,15 +735,21 @@ function renderShop(){
   renderCat('hat', 'gridHat', 'cntHat');
   renderCat('pet', 'gridPet', 'cntPet');
   renderCat('shirt', 'gridShirt', 'cntShirt');
+  const ownedN = REGISTRY.filter(x=>owned.has(x.id)).length;
+  const pct = Math.round(ownedN / REGISTRY.length * 100);
+  el('dexBar').textContent = '📖 도감 ' + ownedN + ' / ' + REGISTRY.length + ' (' + pct + '%)' + (pct===100 ? ' — 모두 모았어! 🏆' : '');
+  el('oddsLine').textContent = '뽑기 확률 — ' + oddsText();
   const pb = el('pullBtn');
   pb.textContent = '뽑기! (' + PULL_COST + ' 🪙)';
   pb.disabled = pulling || coinCount < PULL_COST;
+  el('pull10Btn').disabled = pulling || coinCount < PULL10_COST;
 }
 function openShop(from){
   shopFrom = from;
   el('startScreen').style.display = 'none';
   el('endScreen').style.display = 'none';
   el('revealCard').classList.add('hidden');
+  el('multiReveal').classList.add('hidden');
   el('shopScreen').style.display = 'flex';
   updateWallet(); renderShop();
 }
@@ -719,7 +824,7 @@ function showReveal(it, refund){
     '<span class="rChip" style="background:' + r.col + '">' + r.n + '</span>' +
     '<div class="rEmoji">' + it.emoji + '</div>' +
     '<div class="rName">' + it.name + '</div>' +
-    '<div class="rSub">' + (refund > 0 ? ('이미 있는 친구야! 🪙 +' + refund + '로 바꿨어') : '새 아이템! ✨') + '</div>' +
+    '<div class="rSub">' + (it.desc || '') + (refund > 0 ? (' · 이미 있어서 🪙 +' + refund) : ' · 새 아이템! ✨') + '</div>' +
     (refund > 0 ? '' : '<button class="btn small primary" id="equipNowBtn">바로 장착하기</button>');
   rc.classList.remove('hidden');
   const eb = document.getElementById('equipNowBtn');
@@ -767,6 +872,62 @@ async function doPull(){
   updateWallet(); renderShop();
   pulling = false;
   renderShop();
+}
+async function doPull10(){
+  if(pulling || coinCount < PULL10_COST) return;
+  pulling = true;
+  audioInit();
+  coinCount -= PULL10_COST;
+  markDirty(); updateWallet(); renderShop();
+  el('revealCard').classList.add('hidden');
+  el('multiReveal').classList.add('hidden');
+  const cap = el('capsule');
+  if(!REDUCE){
+    cap.classList.add('shaking');
+    [0,120,240,360,480,620,760].forEach((d,i)=>setTimeout(()=>tone(420+i*70, 0.06, 'square', 0.05), d));
+    await sleep(900);
+    cap.classList.remove('shaking');
+  } else {
+    await sleep(120);
+  }
+  const results = [];
+  let gotEpic = false, totalRefund = 0;
+  for(let i=0;i<10;i++){
+    let it = rollItem();
+    if(i === 9 && !gotEpic){                                   // 마지막 1개는 에픽 이상 보장
+      it = pick(REGISTRY.filter(x=>x.rarity==='e' || x.rarity==='l'));
+    }
+    if(it.rarity === 'e' || it.rarity === 'l') gotEpic = true;
+    let refund = 0;
+    if(owned.has(it.id)){ refund = REFUND[it.rarity]; coinCount += refund; totalRefund += refund; }
+    else { owned.add(it.id); }
+    results.push({ it, refund });
+  }
+  if(results.some(r=>r.it.rarity === 'l')){ sfx.goal(); burst(pX, pY+3, pZ, 40, [0xFFC93C, 0xFF6B5E, 0x9B7BFF, 0xffffff]); }
+  else { sfx.correct(); }
+  markDirty(); await saveProfile();
+  showMultiReveal(results, totalRefund);
+  updateWallet(); renderShop();
+  pulling = false;
+  renderShop();
+}
+function showMultiReveal(results, totalRefund){
+  const mr = el('multiReveal');
+  // 등급 높은 순으로 정렬해 보여주기
+  const order = { l:0, e:1, r:2, c:3 };
+  const sorted = results.slice().sort((a,b)=> order[a.it.rarity] - order[b.it.rarity]);
+  const cells = sorted.map(r=>{
+    const rc = RAR[r.it.rarity].col;
+    return '<div class="mrItem" style="border-color:' + rc + '">' +
+      '<div class="mre">' + r.it.emoji + '</div>' +
+      '<div class="mrn">' + r.it.name + '</div>' +
+      '<div class="mrNew">' + (r.refund > 0 ? '중복' : 'NEW') + '</div></div>';
+  }).join('');
+  const newCount = results.filter(r=>r.refund === 0).length;
+  mr.innerHTML = '<div class="mrTitle">🎉 10연차 결과 — 새 아이템 ' + newCount + '개' +
+    (totalRefund > 0 ? (' · 중복 🪙 +' + totalRefund) : '') + '</div>' +
+    '<div class="mrGrid">' + cells + '</div>';
+  mr.classList.remove('hidden');
 }
 
 // ---------- 문제 은행 ----------
@@ -999,6 +1160,7 @@ let shots = [];
 
 // 로블록스식 시점: 마우스/드래그로 카메라를 돌리고, 이동은 카메라가 보는 방향 기준
 const DEF_PITCH = 0.56, CAM_DIST = 10.2;
+let camDist = CAM_DIST;   // 실제 카메라 거리(게이트 근처에서 뒤로 빠져 문 전체가 보이게 이징)
 let camYaw = 0, camPitch = DEF_PITCH;   // camYaw: 0이면 골(-Z) 방향을 바라봄
 let lockCanvas = null;                  // 포인터락 대상 캔버스 (init3D에서 지정)
 
@@ -1565,7 +1727,7 @@ function addSpiralGate(px, pz, th, top, sub, grade){
   const nx = -Math.sin(th), nz = Math.cos(th);
   const sx =  Math.cos(th), sz = Math.sin(th);
   const rotY = -th;                       // 문 로컬 X→s(반지름), 로컬 Z→n(진행)
-  const OFF = [-2.7, 0, 2.7], DH = 1.35;  // 문 측면 오프셋 / 판정 반폭
+  const OFF = [-2.5, 0, 2.5], DH = 1.25;  // 문 측면 오프셋 / 판정 반폭 (약간 컴팩트하게)
   const wallMat = new THREE.MeshLambertMaterial({ color: CURSTAGE.wall, transparent:true });
   const fadeMats = [wallMat];
   const place = (mesh, off, fz, y)=>{      // off=측면(s), fz=진행(n) 오프셋
@@ -1573,16 +1735,16 @@ function addSpiralGate(px, pz, th, top, sub, grade){
     mesh.rotation.y = rotY; courseGroup.add(mesh);
   };
   // 좌우 기둥 + 상단 보
-  place(new THREE.Mesh(new THREE.BoxGeometry(1.4,4.6,0.6), wallMat), -4.05, 0, top+2.3);
-  place(new THREE.Mesh(new THREE.BoxGeometry(1.4,4.6,0.6), wallMat),  4.05, 0, top+2.3);
-  place(new THREE.Mesh(new THREE.BoxGeometry(9.9,4.6-DOOR_H,0.6), wallMat), 0, 0, top+DOOR_H+(4.6-DOOR_H)/2);
+  place(new THREE.Mesh(new THREE.BoxGeometry(1.3,4.6,0.6), wallMat), -3.75, 0, top+2.3);
+  place(new THREE.Mesh(new THREE.BoxGeometry(1.3,4.6,0.6), wallMat),  3.75, 0, top+2.3);
+  place(new THREE.Mesh(new THREE.BoxGeometry(9.1,4.6-DOOR_H,0.6), wallMat), 0, 0, top+DOOR_H+(4.6-DOOR_H)/2);
 
   const shuffled = shuffle(q.answers);
   const correct = shuffled.indexOf(q.correct);
   const doors = [];
   for(let i=0;i<3;i++){
     const doorMat = new THREE.MeshLambertMaterial({ color: DOOR_COLORS[i], transparent:true });
-    const door = new THREE.Mesh(new THREE.BoxGeometry(2.7, DOOR_H, 0.5), doorMat);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(2.4, DOOR_H, 0.5), doorMat);
     place(door, OFF[i], 0, top + DOOR_H/2);
     const labelMat = new THREE.MeshBasicMaterial({ map: makeLabelTexture(shuffled[i]), transparent:true });
     const label = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3), labelMat);
@@ -1878,7 +2040,7 @@ function startGame(){
   stats = { math:{ok:0,wrong:0}, ko:{ok:0,wrong:0}, en:{ok:0,wrong:0}, falls:0 };
   checkpoint = { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z };
   pX = spawnPos.x; pY = spawnPos.y; pZ = spawnPos.z; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
-  camYaw = 0; camPitch = DEF_PITCH;   // 매 판 시작 때 시점을 진행 방향으로 초기화
+  camYaw = 0; camPitch = DEF_PITCH; camDist = CAM_DIST;   // 매 판 시작 때 시점 초기화
   runT0 = performance.now();
   STATE = 'play';
   el('startScreen').style.display = 'none';
@@ -2075,8 +2237,8 @@ function update(dt){
   for(const g of gates){
     let occl;
     if(g.spiral){
-      const f = (pX - g.cx)*g.nx + (pZ - g.cz)*g.nz - g.wallOffset;   // 벽면에 가까우면 반투명
-      occl = Math.abs(f) < 2.4 && Math.abs(pY - g.platTop) < 4;
+      const f = (pX - g.cx)*g.nx + (pZ - g.cz)*g.nz - g.wallOffset;
+      occl = f > 0.4 && f < 3.2 && Math.abs(pY - g.platTop) < 4;      // 통과한 뒤에만 투명(읽을 땐 선명)
     } else {
       occl = (pZ < g.wallZ + 0.6) && (camera.position.z > g.wallZ);
     }
@@ -2281,10 +2443,20 @@ function update(dt){
     camera.lookAt(0, 2, 0);
   } else {
     // 카메라가 플레이어를 camYaw/camPitch 각도로 공전하며 따라다님 (로블록스식 3인칭)
+    // 퀴즈 문 근처에선 뒤로 살짝 빠지고 문 쪽을 바라봐 3개 문이 화면에 다 담기게 함
+    const nearGate = (MODE === 'tower' && bannerGate) ? bannerGate : null;
+    // 게이트 근처: 문 3개(폭 ~±5)가 화면 가로에 다 담길 만큼 뒤로. 좁은(세로) 화면일수록 더 멀리.
+    let distTarget = CAM_DIST;
+    if(nearGate){
+      const hHalfTan = Math.tan((camera.fov/2) * Math.PI/180) * camera.aspect;   // 가로 반화각 tan
+      const need = 5.5 / Math.max(0.25, hHalfTan);                                // 게이트 반폭이 담기는 거리(여유 포함)
+      distTarget = Math.max(15.0, need / Math.cos(camPitch));
+    }
+    camDist += (distTarget - camDist) * Math.min(1, 4*dt);
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
-    const cx = pX + CAM_DIST * cp * Math.sin(camYaw);
-    const cz = pZ + CAM_DIST * cp * Math.cos(camYaw);
-    const cy = pY + CAM_DIST * sp + 0.6;
+    const cx = pX + camDist * cp * Math.sin(camYaw);
+    const cz = pZ + camDist * cp * Math.cos(camYaw);
+    const cy = pY + camDist * sp + 0.6;
     const k = Math.min(1, 10*dt);
     camera.position.x += (cx - camera.position.x) * k;
     camera.position.y += (cy - camera.position.y) * k;
@@ -2294,7 +2466,9 @@ function update(dt){
       camera.position.x += (Math.random()-0.5)*shake*0.7;
       camera.position.y += (Math.random()-0.5)*shake*0.7;
     }
-    camera.lookAt(pX, pY + 1.7, pZ);
+    let lx = pX, ly = pY + 1.7, lz = pZ;
+    if(nearGate){ lx = pX + (nearGate.cx - pX)*0.4; lz = pZ + (nearGate.cz - pZ)*0.4; ly = pY + 2.2; }
+    camera.lookAt(lx, ly, lz);
   }
 
   updateParticles(dt);
@@ -2331,6 +2505,7 @@ document.getElementById('shopBtn').addEventListener('click', ()=>{ audioInit(); 
 document.getElementById('endShopBtn').addEventListener('click', ()=>{ audioInit(); openShop('end'); });
 document.getElementById('shopClose').addEventListener('click', closeShop);
 document.getElementById('pullBtn').addEventListener('click', doPull);
+document.getElementById('pull10Btn').addEventListener('click', doPull10);
 document.querySelectorAll('.stageCard').forEach(b=>{
   b.addEventListener('click', ()=>{
     const si = Number(b.dataset.s);
