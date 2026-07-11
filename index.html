@@ -118,6 +118,7 @@
 
   /* ---------- 터치 컨트롤 ---------- */
   #touchUI{position:fixed;inset:0;z-index:15;display:none;pointer-events:none;}
+  #lookPad{position:absolute;inset:0;pointer-events:auto;touch-action:none;}
   #stickBase{
     position:absolute;left:22px;bottom:26px;width:120px;height:120px;border-radius:50%;
     background:rgba(255,255,255,.28);border:3px solid rgba(255,255,255,.75);
@@ -261,7 +262,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.2</div>
+    <div id="verTag">v3.3</div>
   </div>
 </div>
 
@@ -318,6 +319,7 @@
 
 <!-- 터치 컨트롤 -->
 <div id="touchUI">
+  <div id="lookPad"></div>
   <div id="stickBase"><div id="stickKnob"></div></div>
   <button id="jumpBtn">점프!</button>
 </div>
@@ -330,7 +332,7 @@
 /* =========================================================
    점프 퀴즈 아일랜드 v1
    - 로블록스 스타일 3D 점프맵 + 교육 퀴즈 문 (수학/국어/영어)
-   - PC(방향키/WASD+스페이스) & 터치(조이스틱+점프버튼)
+   - PC(방향키/WASD+스페이스, 마우스 시점) & 터치(조이스틱+점프버튼, 화면 밀어 시점)
    ========================================================= */
 
 // ---------- 유틸 ----------
@@ -981,6 +983,11 @@ let starMesh = null;
 let bossGroup = null, bossBaseY = 0, bossHitT = 0, bossDead = false, bossBob = 0;
 let shots = [];
 
+// 로블록스식 시점: 마우스/드래그로 카메라를 돌리고, 이동은 카메라가 보는 방향 기준
+const DEF_PITCH = 0.56, CAM_DIST = 10.2;
+let camYaw = 0, camPitch = DEF_PITCH;   // camYaw: 0이면 골(-Z) 방향을 바라봄
+let lockCanvas = null;                  // 포인터락 대상 캔버스 (init3D에서 지정)
+
 const IS_TOUCH = ('ontouchstart' in window) || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 
 function init3D(){
@@ -991,6 +998,7 @@ function init3D(){
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.getElementById('game').appendChild(renderer.domElement);
+  lockCanvas = renderer.domElement;
 
   ambLight = new THREE.AmbientLight(0xffffff, 0.75);
   scene.add(ambLight);
@@ -1648,6 +1656,49 @@ window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
   jb.addEventListener('pointerdown', ev=>{ jumpBuf = 0.13; audioInit(); ev.preventDefault(); });
 })();
 
+// ---------- 시점 회전 (로블록스식) ----------
+const SENS = 0.0025;
+function clampPitch(p){ return Math.max(0.12, Math.min(1.18, p)); }
+function requestLook(){   // PC에서 마우스만 움직여도 시점이 돌도록 포인터락 요청 (버튼 클릭 등 사용자 동작 안에서 호출)
+  if(IS_TOUCH || !lockCanvas || document.pointerLockElement === lockCanvas) return;
+  try{ const p = lockCanvas.requestPointerLock && lockCanvas.requestPointerLock(); if(p && p.catch) p.catch(()=>{}); }catch(e){}
+}
+(function setupLook(){
+  let locked = false;
+  document.addEventListener('pointerlockchange', ()=>{ locked = (document.pointerLockElement === lockCanvas); });
+
+  // 화면(캔버스)을 클릭하면 마우스로 시점 조작 시작 (Esc로 풀렸을 때 다시 누르면 재시작)
+  document.getElementById('game').addEventListener('click', ()=>{ audioInit(); if(STATE==='play') requestLook(); });
+
+  // 포인터락 중: 마우스 이동 = 시점 회전 / 락 해제 상태: 드래그(버튼 누른 채)로도 회전 가능
+  let dragging = false, lx = 0, ly = 0;
+  document.getElementById('game').addEventListener('mousedown', e=>{ if(!locked && STATE==='play'){ dragging = true; lx = e.clientX; ly = e.clientY; } });
+  window.addEventListener('mouseup', ()=>{ dragging = false; });
+  window.addEventListener('mousemove', e=>{
+    if(STATE !== 'play') return;
+    let dx, dy;
+    if(locked){ dx = e.movementX || 0; dy = e.movementY || 0; }
+    else if(dragging){ dx = e.clientX - lx; dy = e.clientY - ly; lx = e.clientX; ly = e.clientY; }
+    else return;
+    camYaw -= dx * SENS;
+    camPitch = clampPitch(camPitch + dy * SENS);
+  });
+
+  // 터치: 이동 조이스틱/점프 버튼을 뺀 화면 영역을 밀면 시점 회전
+  const pad = document.getElementById('lookPad');
+  let lookId = null, tx = 0, ty = 0;
+  pad.addEventListener('pointerdown', ev=>{ lookId = ev.pointerId; tx = ev.clientX; ty = ev.clientY; pad.setPointerCapture(ev.pointerId); audioInit(); });
+  pad.addEventListener('pointermove', ev=>{
+    if(ev.pointerId !== lookId) return;
+    const dx = ev.clientX - tx, dy = ev.clientY - ty; tx = ev.clientX; ty = ev.clientY;
+    camYaw -= dx * SENS * 1.5;
+    camPitch = clampPitch(camPitch + dy * SENS * 1.5);
+  });
+  function endLook(ev){ if(ev.pointerId === lookId) lookId = null; }
+  pad.addEventListener('pointerup', endLook);
+  pad.addEventListener('pointercancel', endLook);
+})();
+
 // ---------- 게임 상태 ----------
 let STATE = 'menu';   // menu | play | goal
 let GRADE = 1;
@@ -1696,6 +1747,7 @@ function startGame(){
   stats = { math:{ok:0,wrong:0}, ko:{ok:0,wrong:0}, en:{ok:0,wrong:0}, falls:0 };
   checkpoint = { x:0, y:0.05, z:2 };
   pX = 0; pY = 0.05; pZ = 2; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
+  camYaw = 0; camPitch = DEF_PITCH;   // 매 판 시작 때 시점을 골 방향으로 초기화
   runT0 = performance.now();
   STATE = 'play';
   el('startScreen').style.display = 'none';
@@ -1706,10 +1758,12 @@ function startGame(){
   updateHUD();
   if(IS_TOUCH){ el('touchUI').style.display = 'block'; }
   const kh = el('keysHint');
-  kh.textContent = IS_TOUCH ? '왼쪽: 이동 🕹️ · 오른쪽: 점프!' : '이동: 방향키 / WASD · 점프: 스페이스';
+  kh.textContent = IS_TOUCH ? '🕹️ 왼쪽: 이동 · 오른쪽 버튼: 점프 · 화면 밀기: 시점 돌리기'
+                            : '이동: 방향키 / WASD · 점프: 스페이스 · 🖱️ 마우스로 시점 돌리기';
   kh.style.display = 'block'; kh.style.opacity = '1';
   setTimeout(()=>{ kh.style.opacity = '0'; }, 5000);
   setTimeout(()=>{ kh.style.display = 'none'; }, 5800);
+  requestLook();   // PC: 시작하자마자 마우스로 시점 조작 가능하도록 (사용자 클릭 흐름 안에서 호출)
   el('nextStageBtn').classList.add('hidden');
   toast(STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!', 1300);
   audioInit();
@@ -1724,6 +1778,7 @@ function respawn(){
 function finishGame(){
   STATE = 'goal';
   hideBanner();
+  if(document.exitPointerLock) document.exitPointerLock();   // 커서 복귀 (엔드 화면 버튼 클릭용)
   el('touchUI').style.display = 'none';
   sfx.goal();
   burst(pX, pY+3, pZ, 60, [0xFF6B5E, 0xFFC93C, 0x3ECF8E, 0x4A90F4, 0x9B7BFF]);
@@ -1890,13 +1945,19 @@ function update(dt){
   if(STATE === 'play'){
     for(const g of gates){ if(g.cool > 0) g.cool -= dt; }
 
-    // 입력 → 이동 (카메라가 +Z 뒤에서 -Z를 봄: 앞 = -Z, 오른쪽 = +X)
-    let ix = 0, iz = 0;
-    if(keys['arrowup'] || keys['w']) iz -= 1;
-    if(keys['arrowdown'] || keys['s']) iz += 1;
-    if(keys['arrowleft'] || keys['a']) ix -= 1;
-    if(keys['arrowright'] || keys['d']) ix += 1;
-    ix += stickX; iz += stickY;
+    // 입력 → 이동 (로블록스식: 카메라가 보는 방향이 '앞'. WASD/조이스틱은 시점 기준)
+    let f = 0, r = 0;
+    if(keys['arrowup'] || keys['w']) f += 1;      // 앞으로
+    if(keys['arrowdown'] || keys['s']) f -= 1;    // 뒤로
+    if(keys['arrowright'] || keys['d']) r += 1;   // 오른쪽
+    if(keys['arrowleft'] || keys['a']) r -= 1;    // 왼쪽
+    f += -stickY;                                  // 조이스틱 위 = 앞으로
+    r += stickX;                                   // 조이스틱 오른쪽 = 오른쪽으로
+    // 카메라 방향(camYaw) 기준 전후·좌우를 월드 좌표로 변환
+    const fwdX = -Math.sin(camYaw), fwdZ = -Math.cos(camYaw);
+    const rgtX =  Math.cos(camYaw), rgtZ = -Math.sin(camYaw);
+    let ix = f*fwdX + r*rgtX;
+    let iz = f*fwdZ + r*rgtZ;
     const il = Math.hypot(ix, iz);
     if(il > 1){ ix/=il; iz/=il; }
     vX = ix * SPEED;
@@ -2057,18 +2118,21 @@ function update(dt){
     camera.position.set(Math.sin(menuT)*13, 6.5, Math.cos(menuT)*13);
     camera.lookAt(0, 2, 0);
   } else {
-    const cx = pX * 0.55;
-    const cy = pY + 5.4;
-    const cz = pZ + 8.6;
-    camera.position.x += (cx - camera.position.x) * Math.min(1, 7*dt);
-    camera.position.y += (cy - camera.position.y) * Math.min(1, 7*dt);
-    camera.position.z += (cz - camera.position.z) * Math.min(1, 9*dt);
+    // 카메라가 플레이어를 camYaw/camPitch 각도로 공전하며 따라다님 (로블록스식 3인칭)
+    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+    const cx = pX + CAM_DIST * cp * Math.sin(camYaw);
+    const cz = pZ + CAM_DIST * cp * Math.cos(camYaw);
+    const cy = pY + CAM_DIST * sp + 0.6;
+    const k = Math.min(1, 10*dt);
+    camera.position.x += (cx - camera.position.x) * k;
+    camera.position.y += (cy - camera.position.y) * k;
+    camera.position.z += (cz - camera.position.z) * k;
     if(shake > 0){
       shake -= dt*1.6;
       camera.position.x += (Math.random()-0.5)*shake*0.7;
       camera.position.y += (Math.random()-0.5)*shake*0.7;
     }
-    camera.lookAt(pX*0.55, pY + 1.6, pZ - 3.5);
+    camera.lookAt(pX, pY + 1.7, pZ);
   }
 
   updateParticles(dt);
@@ -2095,6 +2159,7 @@ document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('replayBtn').addEventListener('click', startGame);
 document.getElementById('menuBtn').addEventListener('click', ()=>{
   STATE = 'menu';
+  if(document.exitPointerLock) document.exitPointerLock();
   el('endScreen').style.display = 'none';
   el('hud').style.display = 'none';
   el('touchUI').style.display = 'none';
@@ -2147,8 +2212,8 @@ document.getElementById('nextStageBtn').addEventListener('click', ()=>{
 })();
 document.getElementById('reportClose').addEventListener('click', closeReport);
 document.getElementById('controlsHint').innerHTML = IS_TOUCH
-  ? '🕹️ 왼쪽 조이스틱으로 이동 · 오른쪽 버튼으로 점프!'
-  : '⌨️ 방향키/WASD로 이동 · 스페이스로 점프!';
+  ? '🕹️ 왼쪽 조이스틱 이동 · 오른쪽 버튼 점프 · 👆 화면을 밀어 시점 돌리기'
+  : '⌨️ WASD/방향키 이동 · 스페이스 점프 · 🖱️ 마우스로 시점 돌리기';
 
 // ---------- 시작 ----------
 init3D();
