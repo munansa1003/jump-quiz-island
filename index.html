@@ -272,7 +272,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.4</div>
+    <div id="verTag">v3.5</div>
   </div>
 </div>
 
@@ -991,6 +991,8 @@ let coins = [];       // {mesh, x, z, y, taken}
 let gates = [];       // {wallZ, platTop, doors:[{mesh,label,x,openY0}], correct, solved, q, signMesh, signCtx?}
 let particles = [];   // {mesh, vx, vy, vz, life}
 let goalZ = -999;
+let goalPos = null;                         // 타워 골 위치(거리 기반 판정용), 섬은 null
+let spawnPos = { x:0, y:0.05, z:2 };        // 시작/스폰 위치 (코스마다 지정)
 let starMesh = null;
 let bossGroup = null, bossBaseY = 0, bossHitT = 0, bossDead = false, bossBob = 0;
 let shots = [];
@@ -1459,7 +1461,10 @@ function addGate(gz, top, sub, grade){
   courseGroup.add(sign);
   fadeMats.push(signMat);
 
-  gates.push({ gz, wallZ, platTop: top, doors, correct, solved:false, q, sign, openT:0, cool:0, fadeMats });
+  // 통일 게이트 프레임 (섬/보스: +Z에서 접근해 -Z로 통과 = 법선 (0,-1))
+  gates.push({ gz, wallZ, platTop: top, doors, correct, solved:false, q, sign, openT:0, cool:0, fadeMats,
+    spiral:false, cx:0, cz:wallZ, nx:0, nz:-1, sx:1, sz:0, wallOffset:0,
+    doorOffsets:DOOR_XS, doorHalf:DOOR_W/2, cpX:0, cpZ:wallZ-2.5 });
 }
 
 function disposeCourse(){
@@ -1482,6 +1487,7 @@ function buildCourse(grade, si){
   platforms = []; coins = []; gates = []; particles.forEach(p=>scene.remove(p.mesh)); particles = [];
   shots.forEach(s=>{ scene.remove(s.m); s.m.geometry.dispose(); s.m.material.dispose(); });
   shots = []; bossGroup = null; starMesh = null;
+  goalPos = null; spawnPos = { x:0, y:0.05, z:2 };   // 기본값(타워가 덮어씀)
   courseGroup = new THREE.Group();
   scene.add(courseGroup);
 
@@ -1547,88 +1553,97 @@ function buildCourse(grade, si){
   courseGroup.add(pole);
 }
 
-// ---------- 점프 타워 (수직 등반) ----------
-// 층마다 발판을 점프해 위로 오르고, 착지대의 퀴즈 문(가로형, gateCollision 재사용)을 통과하면 위층으로.
-// top(높이)만 계단식으로 올리고 z는 기존처럼 감소 → 문 판정·체크포인트(gate.platTop)를 그대로 재사용.
-function towerPlans(si){
-  if(si === 0) return [   // 하늘 타워: 전부 고정 발판, 완만한 지그재그
-    [ {dx:2}, {dx:-2}, {dx:0} ],
-    [ {dx:-2}, {dx:2}, {dx:0} ],
-    [ {dx:2}, {dx:0}, {dx:-2} ],
-    [ {dx:-2}, {dx:2}, {dx:0} ],
-    [ {dx:2}, {dx:-2}, {dx:0} ],
-    [ {dx:-2}, {dx:2}, {dx:0} ]
-  ];
-  if(si === 1) return [   // 반짝 타워: 이동 발판 조금 섞음
-    [ {dx:2}, {dx:-2}, {dx:0} ],
-    [ {dx:-2}, {mv:'x',dx:0}, {dx:2} ],
-    [ {dx:2}, {dx:-2}, {dx:0} ],
-    [ {mv:'x',dx:0}, {dx:2}, {dx:-2} ],
-    [ {dx:2}, {dx:-2}, {mv:'x',dx:0} ],
-    [ {dx:-2}, {dx:2}, {dx:0} ]
-  ];
-  return [                // 우주 타워: 저중력이라 점프가 커짐, 이동 발판 많음
-    [ {dx:2.5}, {dx:-2.5}, {dx:0} ],
-    [ {mv:'x',dx:0}, {dx:2.5}, {dx:-2.5} ],
-    [ {dx:2.5}, {mv:'x',dx:0}, {dx:-2.5} ],
-    [ {dx:-2.5}, {dx:2.5}, {mv:'x',dx:0} ],
-    [ {mv:'x',dx:0}, {dx:-2.5}, {dx:2.5} ],
-    [ {dx:2.5}, {dx:-2.5}, {dx:0} ]
-  ];
+// ---------- 점프 타워 (원형 나선 등반) ----------
+// 중앙 기둥 둘레를 각도 DTH씩 돌며 DY씩 올라가는 원형 나선. 층마다 회전된 퀴즈 문 3개.
+// 문/발판 판정은 방향 무관하게 일반화된 gateCollision을 사용한다.
+const TW = { R:7.2, DTH:42*Math.PI/180, DY:1.42, PER:5, FLOORS:6, TH0:Math.PI };
+
+// 나선 위 한 지점에 회전된 퀴즈 문(3문 벽)을 세운다. th=진행 각도, (px,pz)=착지대 중심.
+function addSpiralGate(px, pz, th, top, sub, grade){
+  const q = genQuestion(sub, grade);
+  // 진행(접선) 방향 n = (-sinθ, cosθ), 측면(반지름) 방향 s = (cosθ, sinθ)
+  const nx = -Math.sin(th), nz = Math.cos(th);
+  const sx =  Math.cos(th), sz = Math.sin(th);
+  const rotY = -th;                       // 문 로컬 X→s(반지름), 로컬 Z→n(진행)
+  const OFF = [-2.7, 0, 2.7], DH = 1.35;  // 문 측면 오프셋 / 판정 반폭
+  const wallMat = new THREE.MeshLambertMaterial({ color: CURSTAGE.wall, transparent:true });
+  const fadeMats = [wallMat];
+  const place = (mesh, off, fz, y)=>{      // off=측면(s), fz=진행(n) 오프셋
+    mesh.position.set(px + sx*off + nx*fz, y, pz + sz*off + nz*fz);
+    mesh.rotation.y = rotY; courseGroup.add(mesh);
+  };
+  // 좌우 기둥 + 상단 보
+  place(new THREE.Mesh(new THREE.BoxGeometry(1.4,4.6,0.6), wallMat), -4.05, 0, top+2.3);
+  place(new THREE.Mesh(new THREE.BoxGeometry(1.4,4.6,0.6), wallMat),  4.05, 0, top+2.3);
+  place(new THREE.Mesh(new THREE.BoxGeometry(9.9,4.6-DOOR_H,0.6), wallMat), 0, 0, top+DOOR_H+(4.6-DOOR_H)/2);
+
+  const shuffled = shuffle(q.answers);
+  const correct = shuffled.indexOf(q.correct);
+  const doors = [];
+  for(let i=0;i<3;i++){
+    const doorMat = new THREE.MeshLambertMaterial({ color: DOOR_COLORS[i], transparent:true });
+    const door = new THREE.Mesh(new THREE.BoxGeometry(2.7, DOOR_H, 0.5), doorMat);
+    place(door, OFF[i], 0, top + DOOR_H/2);
+    const labelMat = new THREE.MeshBasicMaterial({ map: makeLabelTexture(shuffled[i]), transparent:true });
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 2.3), labelMat);
+    label.position.set(px + sx*OFF[i] - nx*0.28, top + DOOR_H/2 + 0.05, pz + sz*OFF[i] - nz*0.28);
+    label.rotation.y = rotY + Math.PI;    // 접근(−n)쪽을 향해 텍스트 표시
+    courseGroup.add(label);
+    doors.push({ mesh: door, label, openY0: door.position.y });
+    fadeMats.push(doorMat, labelMat);
+  }
+  // 과목 간판 (접근쪽 위)
+  const signMat = new THREE.MeshBasicMaterial({ map: makeSignTexture(q.chip + ' 문제!', SUB_COLOR_HEX[sub]), transparent:true });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 1.5), signMat);
+  sign.position.set(px - nx*0.5, top + 5.2, pz - nz*0.5);
+  sign.rotation.y = rotY + Math.PI;
+  courseGroup.add(sign); fadeMats.push(signMat);
+
+  gates.push({ platTop: top, doors, correct, solved:false, q, sign, openT:0, cool:0, fadeMats,
+    spiral:true, cx:px, cz:pz, nx, nz, sx, sz, wallOffset:0,
+    doorOffsets:OFF, doorHalf:DH, cpX:px + nx*1.6, cpZ:pz + nz*1.6 });
 }
+
 function buildTowerCourse(grade, si){
   const S = CURSTAGE;
-  const plans = towerPlans(si);
-  const RISE = 1.4;   // 홉당 상승 높이 (고정 중력 26 기준 점프로 넉넉히 도달)
-  let z = 0, top = 0;
-  addPlat(0, 0, 0, 12, 12, { color: S.startCol });   // 바닥(넓은 시작 발판)
-  let prevHalf = 6;
+  const { R, DTH, DY, PER, FLOORS, TH0 } = TW;
+  let i = 0, topY = 0;
+  const p0x = R*Math.cos(TH0), p0z = R*Math.sin(TH0);
+  addPlat(p0x, 0, p0z, 6.5, 6.5, { color: S.startCol });   // 바닥 시작 발판
+  spawnPos = { x: p0x, y: 0.05, z: p0z };
 
-  for(let gi=0; gi<6; gi++){
-    const plan = plans[gi];
-    for(let hi=0; hi<plan.length; hi++){
-      const h = plan[hi];
-      const isMv = !!h.mv;
-      const gapT = isMv ? 2.2 : 1.8;
-      z -= (prevHalf + gapT + 2.2);
-      top += RISE;                        // 항상 위로만
-      let p;
-      if(isMv){
-        p = addPlat(h.dx || 0, top, z, 4.2, 4.2, { moving:true, axis:'x', amp:S.mvAmp*0.8, sp:1.0, color:S.mvCol });
+  for(let f=0; f<FLOORS; f++){
+    for(let k=0; k<PER; k++){
+      i++;
+      const th = TH0 + i*DTH, y = i*DY;
+      topY = y;
+      const x = R*Math.cos(th), z = R*Math.sin(th);
+      if(k === PER-1){
+        // 층 착지대(넓은 정사각) + 회전 퀴즈 문
+        addPlat(x, y, z, 8.6, 8.6, { color: S.gateCol });
+        addSpiralGate(x, z, th, y, GATE_ORDER[f], grade);
+        addCoin(x + Math.cos(th)*2.6, y + 1.25, z + Math.sin(th)*2.6);
       } else {
-        p = addPlat(h.dx || 0, top, z, 4.4, 4.4, {});
+        addPlat(x, y, z, 3.9, 3.9, {});
+        addCoin(x, y + 1.25, z);
       }
-      prevHalf = 2.2;
-      addCoin(p.x, top + 1.25, z);
     }
-    // 층 착지대 + 퀴즈 문 (가로형, 기존 addGate/gateCollision 재사용)
-    z -= (prevHalf + 2.0 + 5);
-    top += 0.6;
-    addPlat(0, top, z, 13, 10, { color: S.gateCol });
-    prevHalf = 5;
-    addCoin(-3, top + 1.25, z + 3);
-    addCoin( 3, top + 1.25, z + 3);
-    addGate(z, top, GATE_ORDER[gi], grade);
   }
-
-  // 꼭대기 골인 발판
-  z -= (prevHalf + 2.0 + 6);
-  top += 1.0;
-  addPlat(0, top, z, 15, 14, { color: S.goalCol });
-  goalZ = z;
+  // 꼭대기 골인 발판 (마지막 문에서 한 홉 더)
+  i += 1;
+  const gth = TH0 + i*DTH, gy = topY + DY;
+  const gx = R*Math.cos(gth), gz = R*Math.sin(gth);
+  addPlat(gx, gy, gz, 6.5, 6.5, { color: S.goalCol });
+  goalZ = -99999;                 // z기반 골 판정 비활성화
+  goalPos = { x: gx, y: gy, z: gz };
   const starTx = makeSignTexture('⭐ 정상! ⭐', '#FF6B5E');
-  starMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(8, 2.1),
-    new THREE.MeshBasicMaterial({ map: starTx, transparent:true })
-  );
-  starMesh.position.set(0, top + 4.6, z);
-  courseGroup.add(starMesh);
-  const pole = new THREE.Mesh(
-    new THREE.BoxGeometry(0.35, 4.4, 0.35),
-    new THREE.MeshLambertMaterial({ color: S.dirt })
-  );
-  pole.position.set(0, top + 2.2, z);
-  courseGroup.add(pole);
+  starMesh = new THREE.Mesh(new THREE.PlaneGeometry(8, 2.1), new THREE.MeshBasicMaterial({ map: starTx, transparent:true }));
+  starMesh.position.set(gx, gy + 4.6, gz); courseGroup.add(starMesh);
+  const pole = new THREE.Mesh(new THREE.BoxGeometry(0.35, 4.4, 0.35), new THREE.MeshLambertMaterial({ color: S.dirt }));
+  pole.position.set(gx, gy + 2.2, gz); courseGroup.add(pole);
+  // 중앙 장식 기둥 (충돌 없음)
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.4, gy + 8, 2.4), new THREE.MeshLambertMaterial({ color: S.dirt }));
+  pillar.position.set(0, (gy + 8)/2 - 2, 0); courseGroup.add(pillar);
 }
 
 // ---------- 보스 성 ----------
@@ -1861,9 +1876,9 @@ function startGame(){
   buildCourse(GRADE, STAGE);
   runCoins = 0;
   stats = { math:{ok:0,wrong:0}, ko:{ok:0,wrong:0}, en:{ok:0,wrong:0}, falls:0 };
-  checkpoint = { x:0, y:0.05, z:2 };
-  pX = 0; pY = 0.05; pZ = 2; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
-  camYaw = 0; camPitch = DEF_PITCH;   // 매 판 시작 때 시점을 골 방향으로 초기화
+  checkpoint = { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z };
+  pX = spawnPos.x; pY = spawnPos.y; pZ = spawnPos.z; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
+  camYaw = 0; camPitch = DEF_PITCH;   // 매 판 시작 때 시점을 진행 방향으로 초기화
   runT0 = performance.now();
   STATE = 'play';
   el('startScreen').style.display = 'none';
@@ -1955,12 +1970,12 @@ function answerDoor(gate, idx){
     sfx.correct();
     toast(pick(GOOD), 1400);
     const d = gate.doors[idx];
-    burst(d.mesh.position.x, gate.platTop + 2, gate.wallZ + 1, 26, [0xFFC93C, 0xFF6B5E, 0x3ECF8E, 0xffffff]);
+    burst(d.mesh.position.x, gate.platTop + 2, d.mesh.position.z, 26, [0xFFC93C, 0xFF6B5E, 0x3ECF8E, 0xffffff]);
     // 간판 교체
     gate.sign.material.map.dispose();
     gate.sign.material.map = makeSignTexture('통과! 🎉', '#3ECF8E');
     gate.sign.material.needsUpdate = true;
-    checkpoint = { x: 0, y: gate.platTop + 0.05, z: gate.wallZ - 2.5 };
+    checkpoint = { x: gate.cpX, y: gate.platTop + 0.05, z: gate.cpZ };
     if(CURSTAGE.boss){
       shootStar();
       if(gates.every(g=>g.solved)) setTimeout(bossDefeat, 750);
@@ -1989,34 +2004,37 @@ function answerDoor(gate, idx){
 }
 
 // ---------- 물리 & 게이트 판정 ----------
-function doorRegion(x){
+function doorRegionOff(side, g){
   for(let i=0;i<3;i++){
-    if(Math.abs(x - DOOR_XS[i]) <= DOOR_W/2 + 0.05) return i;
+    if(Math.abs(side - g.doorOffsets[i]) <= g.doorHalf + 0.05) return i;
   }
   return -1;
 }
-function gateCollision(prevZ){
+// 방향 무관 게이트 판정: 각 게이트의 로컬 프레임(n=진행법선, s=측면)으로 통과/차단.
+function gateCollision(prevX, prevZ){
+  const PAD = 0.3 + P_R;
   for(const g of gates){
-    if(Math.abs(pZ - g.wallZ) > 3 && Math.abs(prevZ - g.wallZ) > 3) continue;
-    const zFront = g.wallZ + 0.3 + P_R;
-    const zBack  = g.wallZ - 0.3 - P_R;
+    if(Math.abs(pY - g.platTop) > 4) continue;                 // 다른 층 게이트 무시(높이)
+    const f  = (pX - g.cx)*g.nx + (pZ - g.cz)*g.nz - g.wallOffset;      // 전방 거리(>0: 통과한 쪽)
+    const pf = (prevX - g.cx)*g.nx + (prevZ - g.cz)*g.nz - g.wallOffset;
+    if(f > 3.2 && pf > 3.2) continue;
+    if(f < -3.2 && pf < -3.2) continue;
+    const side = (pX - g.cx)*g.sx + (pZ - g.cz)*g.sz;
     const headRel = (pY + P_H) - g.platTop;
-    const region = doorRegion(pX);
+    const region = doorRegionOff(side, g);
     const passable = g.solved && region === g.correct && headRel < DOOR_H + 0.1;
+    if(passable) continue;
+    const killNormalV = ()=>{ const vn = vX*g.nx + vZ*g.nz; vX -= vn*g.nx; vZ -= vn*g.nz; };
 
-    // 앞(+Z)에서 벽 통과 시도
-    if(prevZ >= zFront && pZ < zFront){
-      if(passable) continue;
-      pZ = zFront + 0.02; vZ = 0;
-      if(region >= 0 && !g.solved && g.cool <= 0){
-        answerDoor(g, region);
-        g.cool = 0.9;
-        if(!g.solved) pZ = zFront + 0.55;   // 오답이면 살짝 밀려남
+    // 벽은 두께 2*PAD의 솔리드 슬래브. 슬래브 '안'이면 진입한 쪽 면으로 밀어냄
+    // (전이가 아니라 '상태'로 판정 → 부동소수 경계에서 새어나가지 않음)
+    if(f > -PAD && f < PAD){
+      if(pf <= 0){                                   // 접근쪽(-)에서 진입 → 접근 면(-PAD)으로
+        const push = f - (-PAD); pX -= push*g.nx; pZ -= push*g.nz; killNormalV();
+        if(region >= 0 && !g.solved && g.cool <= 0){ answerDoor(g, region); g.cool = 0.9; }
+      } else {                                        // 통과쪽(+)에서 되돌아옴 → 통과 면(+PAD)으로
+        const push = f - PAD; pX -= push*g.nx; pZ -= push*g.nz; killNormalV();
       }
-    }
-    // 뒤(-Z)에서 되돌아 통과 시도
-    else if(prevZ <= zBack && pZ > zBack){
-      if(!passable){ pZ = zBack - 0.02; vZ = 0; }
     }
   }
 }
@@ -2053,9 +2071,15 @@ function update(dt){
     }
   }
 
-  // 벽이 카메라와 캐릭터 사이에 있으면 반투명하게 (통과 직후 가림 방지)
+  // 벽이 시야를 가리지 않게 반투명 처리 (통과 직전·직후)
   for(const g of gates){
-    const occl = (pZ < g.wallZ + 0.6) && (camera.position.z > g.wallZ);
+    let occl;
+    if(g.spiral){
+      const f = (pX - g.cx)*g.nx + (pZ - g.cz)*g.nz - g.wallOffset;   // 벽면에 가까우면 반투명
+      occl = Math.abs(f) < 2.4 && Math.abs(pY - g.platTop) < 4;
+    } else {
+      occl = (pZ < g.wallZ + 0.6) && (camera.position.z > g.wallZ);
+    }
     const target = occl ? 0.15 : 1;
     for(const m of g.fadeMats){
       m.opacity += (target - m.opacity) * Math.min(1, 8*dt);
@@ -2094,7 +2118,7 @@ function update(dt){
     }
 
     vY -= G_CUR * dt;
-    const prevY = pY, prevZ = pZ;
+    const prevY = pY, prevZ = pZ, prevX = pX;
     pX += vX * dt;
     pZ += vZ * dt;
     pY += vY * dt;
@@ -2121,7 +2145,7 @@ function update(dt){
     }
     if(!standOn) onGround = false;
 
-    gateCollision(prevZ);
+    gateCollision(prevX, prevZ);
 
     // 동전
     for(const c of coins){
@@ -2137,9 +2161,19 @@ function update(dt){
 
     // 문제 배너: 가까운 미해결 게이트 (바뀔 때만 갱신)
     let near = null;
-    for(const g of gates){
-      if(g.solved) continue;
-      if(pZ < g.gz + 7 && pZ > g.wallZ - 1){ near = g; break; }
+    if(gates.length && gates[0].spiral){
+      let bestD = 36;   // 6칸 반경
+      for(const g of gates){
+        if(g.solved) continue;
+        if(Math.abs(pY - g.platTop) > 5) continue;
+        const dx = pX - g.cx, dz = pZ - g.cz, d2 = dx*dx + dz*dz;
+        if(d2 < bestD){ bestD = d2; near = g; }
+      }
+    } else {
+      for(const g of gates){
+        if(g.solved) continue;
+        if(pZ < g.gz + 7 && pZ > g.wallZ - 1){ near = g; break; }
+      }
     }
     if(near !== bannerGate){
       bannerGate = near;
@@ -2150,8 +2184,15 @@ function update(dt){
     const killY = (MODE === 'tower') ? (checkpoint.y - 8) : -11;
     if(pY < killY) respawn();
 
-    // 골인
-    if(pZ < goalZ + 3 && STATE === 'play') finishGame();
+    // 골인 (타워: 정상 발판에 거리로 도달 판정 / 그 외: z기반)
+    if(STATE === 'play'){
+      if(goalPos){
+        const dx = pX - goalPos.x, dz = pZ - goalPos.z;
+        if(dx*dx + dz*dz < 12 && pY > goalPos.y - 2.5) finishGame();
+      } else if(pZ < goalZ + 3){
+        finishGame();
+      }
+    }
 
     // 캐릭터 방향/걷기
     if(il > 0.05){
