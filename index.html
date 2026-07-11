@@ -57,6 +57,12 @@
   #startCard .mascot{font-size:56px;line-height:1;}
   #startCard h1{font-size:30px;font-weight:900;margin:8px 0 4px;letter-spacing:-0.5px;}
   #startCard .tag{font-size:15px;font-weight:700;color:#6b7f8e;margin-bottom:18px;}
+  .modeRow{display:flex;gap:10px;justify-content:center;margin-bottom:14px;}
+  .modePill{flex:1;max-width:150px;padding:11px 0;border-radius:16px;border:3px solid var(--ink);
+    background:#fff;font-weight:800;font-size:16px;cursor:pointer;box-shadow:0 4px 0 var(--ink);
+    font-family:inherit;transition:transform .06s ease;}
+  .modePill.on{background:#4A90F4;color:#fff;}
+  .modePill:active{transform:translateY(3px);box-shadow:0 1px 0 var(--ink);}
   .gradeRow{display:flex;gap:10px;justify-content:center;margin-bottom:16px;}
   .gradePill{
     flex:1;max-width:110px;padding:12px 0;border-radius:16px;border:3px solid var(--ink);
@@ -242,7 +248,11 @@
   <div id="startCard" class="card">
     <div class="mascot">🏝️</div>
     <h1>점프 퀴즈 아일랜드</h1>
-    <div class="tag">뛰고 · 풀고 · 모으자!</div>
+    <div class="tag" id="tagLine">뛰고 · 풀고 · 모으자!</div>
+    <div class="modeRow">
+      <button class="modePill on" data-m="island">🏝️ 섬 모드</button>
+      <button class="modePill" data-m="tower">🗼 타워 모드</button>
+    </div>
     <div class="gradeRow">
       <button class="gradePill on" data-g="1">1학년</button>
       <button class="gradePill" data-g="2">2학년</button>
@@ -262,7 +272,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.3</div>
+    <div id="verTag">v3.4</div>
   </div>
 </div>
 
@@ -453,7 +463,7 @@ function profKey(g){ return 'jqi-save-' + g; }
 function markDirty(){ dirty = true; }
 async function saveProfile(){
   dirty = false; lastSaveT = performance.now();
-  const data = { coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared, report: report, best: best };
+  const data = { coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared, towerCleared: towerCleared, report: report, best: best };
   await storeSet(profKey(GRADE), JSON.stringify(data));
 }
 async function loadProfile(g){
@@ -466,6 +476,8 @@ async function loadProfile(g){
   equip = (d && d.equip) || { hat:null, pet:null, shirt:null };
   cleared = (d && d.cleared) || [false, false, false, false];
   while(cleared.length < 4) cleared.push(false);
+  towerCleared = (d && d.towerCleared) || [false, false, false];
+  while(towerCleared.length < 3) towerCleared.push(false);
   best = (d && d.best) || {};
   report = (d && d.report && d.report.sub) ? d.report : newReport();
   if(STAGE > 0 && !stageUnlocked(STAGE)) STAGE = 0;
@@ -1314,19 +1326,34 @@ const STAGES = [
     dirt:0x4A2634, wall:0xE8C9B0, gap:2.4, gapMv:2.2, mvAmp:2.2 }
 ];
 let STAGE = 0;
+let MODE = 'island';                       // 'island'(가로 달리기) | 'tower'(수직 등반)
 let cleared = [false, false, false, false];
+let towerCleared = [false, false, false];  // 타워 3개 클리어 여부 (세이브에 추가, 없으면 기본값)
+const ISLAND_EMOJI = ['🏝️','💎','🚀','👑'];
+const ISLAND_NAMES = ['하늘 섬','반짝 동굴','둥둥 우주','보스 성'];
+const TOWER_NAMES  = ['하늘 타워','반짝 타워','우주 타워'];
 function stageUnlocked(si){
   if(si === 0) return true;
   if(si === 3) return cleared[0] && cleared[1] && cleared[2];
   return cleared[si-1];
 }
+function stageUnlockedTower(si){ return si === 0 ? true : !!towerCleared[si-1]; }
+function stageName(si){ return MODE === 'tower' ? TOWER_NAMES[si] : ISLAND_NAMES[si]; }
+function maxStageIdx(){ return MODE === 'tower' ? 2 : STAGES.length - 1; }
+function isUnlocked(si){ return MODE === 'tower' ? stageUnlockedTower(si) : stageUnlocked(si); }
+function isCleared(si){ return MODE === 'tower' ? !!towerCleared[si] : !!cleared[si]; }
 function updateStageRow(){
   document.querySelectorAll('.stageCard').forEach(b=>{
     const si = Number(b.dataset.s);
-    const un = stageUnlocked(si);
+    // 타워 모드에는 보스(3번) 카드 숨김
+    if(MODE === 'tower' && si === 3){ b.style.display = 'none'; return; }
+    b.style.display = '';
+    b.childNodes[0].nodeValue = (MODE === 'tower') ? '🗼' : ISLAND_EMOJI[si];
+    b.querySelector('span').textContent = stageName(si);
+    const un = isUnlocked(si);
     b.classList.toggle('locked', !un);
     b.classList.toggle('on', si === STAGE);
-    b.querySelector('em').textContent = cleared[si] ? '⭐' : (un ? '' : '🔒');
+    b.querySelector('em').textContent = isCleared(si) ? '⭐' : (un ? '' : '🔒');
   });
 }
 function stagePlans(si){
@@ -1458,6 +1485,10 @@ function buildCourse(grade, si){
   courseGroup = new THREE.Group();
   scene.add(courseGroup);
 
+  if(MODE === 'tower'){
+    buildTowerCourse(grade, si);
+    return;
+  }
   if(S.boss){
     buildBossCourse(grade);
     return;
@@ -1502,6 +1533,90 @@ function buildCourse(grade, si){
   addPlat(0, top, z, 15, 14, { color: S.goalCol });
   goalZ = z;
   const starTx = makeSignTexture('⭐ 골인! ⭐', '#FF6B5E');
+  starMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(8, 2.1),
+    new THREE.MeshBasicMaterial({ map: starTx, transparent:true })
+  );
+  starMesh.position.set(0, top + 4.6, z);
+  courseGroup.add(starMesh);
+  const pole = new THREE.Mesh(
+    new THREE.BoxGeometry(0.35, 4.4, 0.35),
+    new THREE.MeshLambertMaterial({ color: S.dirt })
+  );
+  pole.position.set(0, top + 2.2, z);
+  courseGroup.add(pole);
+}
+
+// ---------- 점프 타워 (수직 등반) ----------
+// 층마다 발판을 점프해 위로 오르고, 착지대의 퀴즈 문(가로형, gateCollision 재사용)을 통과하면 위층으로.
+// top(높이)만 계단식으로 올리고 z는 기존처럼 감소 → 문 판정·체크포인트(gate.platTop)를 그대로 재사용.
+function towerPlans(si){
+  if(si === 0) return [   // 하늘 타워: 전부 고정 발판, 완만한 지그재그
+    [ {dx:2}, {dx:-2}, {dx:0} ],
+    [ {dx:-2}, {dx:2}, {dx:0} ],
+    [ {dx:2}, {dx:0}, {dx:-2} ],
+    [ {dx:-2}, {dx:2}, {dx:0} ],
+    [ {dx:2}, {dx:-2}, {dx:0} ],
+    [ {dx:-2}, {dx:2}, {dx:0} ]
+  ];
+  if(si === 1) return [   // 반짝 타워: 이동 발판 조금 섞음
+    [ {dx:2}, {dx:-2}, {dx:0} ],
+    [ {dx:-2}, {mv:'x',dx:0}, {dx:2} ],
+    [ {dx:2}, {dx:-2}, {dx:0} ],
+    [ {mv:'x',dx:0}, {dx:2}, {dx:-2} ],
+    [ {dx:2}, {dx:-2}, {mv:'x',dx:0} ],
+    [ {dx:-2}, {dx:2}, {dx:0} ]
+  ];
+  return [                // 우주 타워: 저중력이라 점프가 커짐, 이동 발판 많음
+    [ {dx:2.5}, {dx:-2.5}, {dx:0} ],
+    [ {mv:'x',dx:0}, {dx:2.5}, {dx:-2.5} ],
+    [ {dx:2.5}, {mv:'x',dx:0}, {dx:-2.5} ],
+    [ {dx:-2.5}, {dx:2.5}, {mv:'x',dx:0} ],
+    [ {mv:'x',dx:0}, {dx:-2.5}, {dx:2.5} ],
+    [ {dx:2.5}, {dx:-2.5}, {dx:0} ]
+  ];
+}
+function buildTowerCourse(grade, si){
+  const S = CURSTAGE;
+  const plans = towerPlans(si);
+  const RISE = 1.4;   // 홉당 상승 높이 (고정 중력 26 기준 점프로 넉넉히 도달)
+  let z = 0, top = 0;
+  addPlat(0, 0, 0, 12, 12, { color: S.startCol });   // 바닥(넓은 시작 발판)
+  let prevHalf = 6;
+
+  for(let gi=0; gi<6; gi++){
+    const plan = plans[gi];
+    for(let hi=0; hi<plan.length; hi++){
+      const h = plan[hi];
+      const isMv = !!h.mv;
+      const gapT = isMv ? 2.2 : 1.8;
+      z -= (prevHalf + gapT + 2.2);
+      top += RISE;                        // 항상 위로만
+      let p;
+      if(isMv){
+        p = addPlat(h.dx || 0, top, z, 4.2, 4.2, { moving:true, axis:'x', amp:S.mvAmp*0.8, sp:1.0, color:S.mvCol });
+      } else {
+        p = addPlat(h.dx || 0, top, z, 4.4, 4.4, {});
+      }
+      prevHalf = 2.2;
+      addCoin(p.x, top + 1.25, z);
+    }
+    // 층 착지대 + 퀴즈 문 (가로형, 기존 addGate/gateCollision 재사용)
+    z -= (prevHalf + 2.0 + 5);
+    top += 0.6;
+    addPlat(0, top, z, 13, 10, { color: S.gateCol });
+    prevHalf = 5;
+    addCoin(-3, top + 1.25, z + 3);
+    addCoin( 3, top + 1.25, z + 3);
+    addGate(z, top, GATE_ORDER[gi], grade);
+  }
+
+  // 꼭대기 골인 발판
+  z -= (prevHalf + 2.0 + 6);
+  top += 1.0;
+  addPlat(0, top, z, 15, 14, { color: S.goalCol });
+  goalZ = z;
+  const starTx = makeSignTexture('⭐ 정상! ⭐', '#FF6B5E');
   starMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(8, 2.1),
     new THREE.MeshBasicMaterial({ map: starTx, transparent:true })
@@ -1740,7 +1855,8 @@ const NOPE = ['괜찮아, 다시 도전! 💪','음~ 다시 생각해볼까? �
 
 function startGame(){
   GRADE = Number(document.querySelector('.gradePill.on').dataset.g);
-  G_CUR = STAGES[STAGE].grav;
+  // 타워는 일정한 중력으로 통일 (테마별 저중력이면 점프가 발판을 넘어가버림)
+  G_CUR = (MODE === 'tower') ? 26 : STAGES[STAGE].grav;
   buildDeco(STAGE);
   buildCourse(GRADE, STAGE);
   runCoins = 0;
@@ -1765,7 +1881,7 @@ function startGame(){
   setTimeout(()=>{ kh.style.display = 'none'; }, 5800);
   requestLook();   // PC: 시작하자마자 마우스로 시점 조작 가능하도록 (사용자 클릭 흐름 안에서 호출)
   el('nextStageBtn').classList.add('hidden');
-  toast(STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!', 1300);
+  toast((MODE==='tower' ? '🗼 ' + stageName(STAGE) + ' 등반!' : STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!'), 1300);
   audioInit();
 }
 function respawn(){
@@ -1786,26 +1902,30 @@ function finishGame(){
 
   const totalWrong = stats.math.wrong + stats.ko.wrong + stats.en.wrong;
   const S = STAGES[STAGE];
-  cleared[STAGE] = true;
+  const isTower = (MODE === 'tower');
+  const emoji = isTower ? '🗼' : S.emoji;
+  if(isTower){ towerCleared[STAGE] = true; } else { cleared[STAGE] = true; }
   report.runs++;
   markDirty();
   updateStageRow();
   const nb = el('nextStageBtn');
-  if(STAGE < STAGES.length - 1){
+  if(STAGE < maxStageIdx()){
     nb.classList.remove('hidden');
-    nb.textContent = '다음: ' + STAGES[STAGE+1].emoji + ' ' + STAGES[STAGE+1].name + ' ▶';
+    nb.textContent = '다음: ' + (isTower ? '🗼 ' : STAGES[STAGE+1].emoji + ' ') + stageName(STAGE+1) + ' ▶';
   } else {
     nb.classList.add('hidden');
   }
   el('endTitle').textContent = S.boss ? '👑 보스를 물리쳤다!' :
       ((totalWrong===0 && stats.falls===0)
-      ? '완벽 클리어! 천재잖아? 🌟' : (S.emoji + ' ' + S.name + ' 클리어! 🏆'));
+      ? (isTower ? '정상 정복! 완벽해 🌟' : '완벽 클리어! 천재잖아? 🌟')
+      : (emoji + ' ' + stageName(STAGE) + (isTower ? ' 정상! 🏆' : ' 클리어! 🏆')));
   if(S.boss){ coinCount += 30; runCoins += 30; }
   el('endCoins').textContent = '이번 모험 🪙 +' + runCoins + ' · 내 지갑 🪙 ' + coinCount;
   const elapsed = performance.now() - runT0;
-  const prevBest = best[STAGE];
+  const bestKey = (isTower ? 't' : '') + STAGE;
+  const prevBest = best[bestKey];
   const isRec = !prevBest || elapsed < prevBest;
-  if(isRec) best[STAGE] = elapsed;
+  if(isRec) best[bestKey] = elapsed;
   el('timeLine').textContent = '⏱️ 이번 기록 ' + fmtTime(elapsed) +
       (isRec ? ' · 최고 기록 달성! 🎉' : ' · 최고 기록 ' + fmtTime(prevBest));
   markDirty();
@@ -2026,8 +2146,9 @@ function update(dt){
       if(near) showBanner(near.q); else hideBanner();
     }
 
-    // 낙하
-    if(pY < -11) respawn();
+    // 낙하 (타워: 마지막 통과 층보다 조금 아래로 떨어지면 그 층으로 복귀)
+    const killY = (MODE === 'tower') ? (checkpoint.y - 8) : -11;
+    if(pY < killY) respawn();
 
     // 골인
     if(pZ < goalZ + 3 && STATE === 'play') finishGame();
@@ -2173,7 +2294,7 @@ document.querySelectorAll('.stageCard').forEach(b=>{
   b.addEventListener('click', ()=>{
     const si = Number(b.dataset.s);
     audioInit();
-    if(!stageUnlocked(si)){ toast('앞 스테이지를 먼저 클리어해봐! 🔒', 1200); return; }
+    if(!isUnlocked(si)){ toast((MODE==='tower'?'앞 타워를':'앞 스테이지를') + ' 먼저 클리어해봐! 🔒', 1200); return; }
     STAGE = si;
     updateStageRow();
     buildDeco(STAGE);
@@ -2182,9 +2303,25 @@ document.querySelectorAll('.stageCard').forEach(b=>{
   });
 });
 document.getElementById('nextStageBtn').addEventListener('click', ()=>{
-  if(STAGE < STAGES.length - 1 && stageUnlocked(STAGE + 1)) STAGE = STAGE + 1;
+  if(STAGE < maxStageIdx() && isUnlocked(STAGE + 1)) STAGE = STAGE + 1;
   updateStageRow();
   startGame();
+});
+// 모드 토글 (섬 / 타워)
+document.querySelectorAll('.modePill').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    const m = b.dataset.m;
+    if(m === MODE) return;
+    MODE = m;
+    audioInit();
+    document.querySelectorAll('.modePill').forEach(x=>x.classList.toggle('on', x.dataset.m === MODE));
+    el('tagLine').textContent = (MODE === 'tower') ? '오르고 · 풀고 · 정상으로!' : '뛰고 · 풀고 · 모으자!';
+    if(STAGE > maxStageIdx() || !isUnlocked(STAGE)) STAGE = 0;   // 잠긴/보스 선택 방지
+    updateStageRow();
+    buildDeco(STAGE);
+    buildCourse(GRADE, STAGE);
+    tone(700, 0.08, 'sine', 0.1);
+  });
 });
 (function setupReportGate(){
   const rb = document.getElementById('reportBtn');
