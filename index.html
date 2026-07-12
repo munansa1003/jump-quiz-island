@@ -266,6 +266,13 @@
   .missRow{font-size:13px;font-weight:700;background:#FFF3F1;border:2px solid #F0C4BE;border-radius:10px;
     padding:5px 10px;margin-bottom:5px;display:flex;justify-content:space-between;gap:8px;align-items:center;}
   .repEmpty{font-size:13px;font-weight:700;color:#6b7f8e;padding:4px 0;}
+  .concRow{display:flex;align-items:center;gap:7px;margin:5px 0;font-size:12.5px;font-weight:800;}
+  .concName{width:76px;flex-shrink:0;color:#3a4d5c;}
+  .concBarWrap{flex:1;height:11px;background:#E7EDF1;border-radius:7px;border:2px solid var(--ink);overflow:hidden;}
+  .concBar{height:100%;}
+  .concBadge{flex-shrink:0;font-size:11px;font-weight:800;padding:2px 7px;border-radius:8px;border:2px solid var(--ink);}
+  .repTip{font-size:13px;font-weight:800;background:#EAF6FF;border:2px solid #A9D4F5;border-radius:12px;
+    padding:9px 12px;margin:6px 0 2px;line-height:1.45;color:#204a63;}
 
   @media (max-width:420px){
     #bMain{font-size:24px;}
@@ -879,6 +886,39 @@ function renderKidReport(name, d){
       '<span class="repPct">' + (t ? pct + '%' : '—') + '</span></div>' +
       '<div class="repCnt">정답 ' + v.ok + ' · 오답 ' + v.wrong + '</div>';
   });
+  // 개념별 숙련도
+  const conc = rep.concept || {};
+  const shown = CONCEPT_ORDER.filter(k => conc[k] && (conc[k].ok + conc[k].wrong) > 0);
+  if(shown.length){
+    inner += '<div class="repMissT">📚 개념별 숙련도</div>';
+    shown.forEach(k=>{
+      const c = conc[k]; const t = c.ok + c.wrong; const pct = Math.round(c.ok / t * 100);
+      let badge, bg, barc;
+      if(t < 3){ badge = '더 해보자'; bg = '#EEF2F5'; barc = '#9DB2C0'; }
+      else if(pct >= 85){ badge = '잘함 😄'; bg = '#DFF6E8'; barc = '#3ECF8E'; }
+      else if(pct >= 60){ badge = '좋아요 🙂'; bg = '#EAF2FF'; barc = '#4A90F4'; }
+      else { badge = '연습 필요 💪'; bg = '#FFECE9'; barc = '#FF6B5E'; }
+      inner += '<div class="concRow"><span class="concName">' + CONCEPT_NAME[k] + '</span>' +
+        '<div class="concBarWrap"><div class="concBar" style="width:' + pct + '%;background:' + barc + '"></div></div>' +
+        '<span class="concBadge" style="background:' + bg + '">' + badge + '</span></div>';
+    });
+    // 이번 주 도와줄 부분 (충분히 풀어본 것 중 정답률 낮은 개념)
+    const weak = shown.filter(k=>{ const c = conc[k]; const t = c.ok + c.wrong; return t >= 3 && c.ok / t < 0.7; })
+      .sort((a,b)=> (conc[a].ok/(conc[a].ok+conc[a].wrong)) - (conc[b].ok/(conc[b].ok+conc[b].wrong)))
+      .slice(0,2);
+    if(weak.length){
+      const names = weak.map(k=>CONCEPT_NAME[k]).join(', ');
+      inner += '<div class="repTip">💛 이번 주엔 <b>' + names + '</b> 함께 연습해요!<br>' + CONCEPT_TIP[weak[0]] + '.</div>';
+    } else {
+      inner += '<div class="repTip">👏 모든 개념을 골고루 잘하고 있어요!</div>';
+    }
+  }
+  // 복습 안내
+  const rqN = (rep.review || []).length;
+  if(rqN > 0){
+    inner += '<div class="repTip" style="background:#FFF6D8;border-color:#F0B429;color:#7a5b00">' +
+      '📒 복습할 문제 ' + rqN + '개 — 시작화면 <b>복습하기</b>로 다시 도전할 수 있어요!</div>';
+  }
   const missed = rep.missed || {};
   const top = Object.keys(missed).sort((a,b)=>missed[b]-missed[a]).slice(0,5);
   inner += '<div class="repMissT">🔎 자주 틀린 문제</div>';
@@ -1192,6 +1232,17 @@ const CONCEPT_NAME = {
   'en.word':'영어 단어', 'en.phonics':'파닉스'
 };
 const OP_KO = { '+':'더하기', '-':'빼기', '×':'곱하기', '÷':'나누기' };
+const CONCEPT_ORDER = ['math.add','math.sub','math.mul','math.div','ko.word','ko.spell','en.word','en.phonics'];
+const CONCEPT_TIP = {
+  'math.add':'수를 10으로 묶어 더하는 연습이 좋아요',
+  'math.sub':'큰 수에서 작은 수를 덜어내며 세어봐요',
+  'math.mul':'구구단을 노래처럼 외워봐요',
+  'math.div':'곱셈을 거꾸로 생각하면 나눗셈이 쉬워요',
+  'ko.word':'그림책을 함께 읽으며 낱말을 익혀요',
+  'ko.spell':'받침이 있는 낱말을 소리내어 읽어봐요',
+  'en.word':'그림 카드로 영어 단어를 익혀요',
+  'en.phonics':'글자의 소리를 하나씩 붙여 읽어봐요'
+};
 // 학년별 수학 개념 기본 비중 (원래 분포 유지)
 const MATH_POOL = {
   1: [['add',0.55],['sub',0.45]],
