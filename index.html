@@ -160,7 +160,8 @@
   #crosshair{
     position:fixed;left:50%;top:50%;transform:translate(-50%,-52%);z-index:19;display:none;
     font-size:30px;font-weight:900;color:rgba(255,255,255,.9);text-shadow:0 0 4px rgba(0,0,0,.5);
-    pointer-events:none;}
+    pointer-events:none;transition:color .1s, transform .1s;}
+  #crosshair.locked{color:#FF5252;transform:translate(-50%,-52%) scale(1.35);text-shadow:0 0 8px rgba(255,60,60,.8);}
 
   #keysHint{
     position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
@@ -307,7 +308,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.9</div>
+    <div id="verTag">v3.10</div>
   </div>
 </div>
 
@@ -1201,6 +1202,7 @@ let shots = [];
 // 침공 모드 전투: 적(박쥐·외계인) + 총알
 let enemies = [];      // {group, x, y, z, hp, type, hitT, ph, wingT}
 let bullets = [];      // {mesh, vx, vy, vz, life}
+let lockMesh = null, aimTarget = null;   // 에임 보조: 조준점 근처 적을 락온
 let hearts = 3;        // 남은 하트(생명). 0이면 체크포인트로 복귀(코인 감소 없음)
 const MAX_HEARTS = 3;
 let invuln = 0, enemySpawnT = 0, fireCool = 0, enemiesBeat = 0;
@@ -1932,7 +1934,8 @@ function bossDefeat(){
 function clearCombat(){
   enemies.forEach(e=>{ scene.remove(e.group); e.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); });
   bullets.forEach(b=>{ scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); });
-  enemies = []; bullets = [];
+  enemies = []; bullets = []; aimTarget = null;
+  if(lockMesh) lockMesh.visible = false;
 }
 function makeEnemy(type, x, y, z){
   const g = new THREE.Group();
@@ -2029,16 +2032,59 @@ function hitPlayer(){
     toast('❤️ 조심해!', 900);
   }
 }
+// 에임 보조: 조준점(카메라 정면) 근처·사거리 안의 가장 가까운 적을 고른다
+function pickTarget(){
+  if(!enemies.length || !camera) return null;
+  const dir = new THREE.Vector3(); camera.getWorldDirection(dir);
+  const cam = camera.position;
+  let best = null, bestDot = Math.cos(26 * Math.PI/180);   // 조준점 기준 26도 이내
+  for(const e of enemies){
+    const vx = e.x - cam.x, vy = e.y - cam.y, vz = e.z - cam.z;
+    const len = Math.hypot(vx, vy, vz) || 1;
+    if(len > 48) continue;                                  // 사거리
+    const dot = (vx*dir.x + vy*dir.y + vz*dir.z) / len;
+    if(dot > bestDot){ bestDot = dot; best = e; }
+  }
+  return best;
+}
+function ensureLock(){
+  if(lockMesh) return;
+  lockMesh = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.1, 8, 22),
+    new THREE.MeshBasicMaterial({ color: 0xFF5252, fog:false }));
+  lockMesh.visible = false;
+  scene.add(lockMesh);
+}
+function updateLockReticle(t){
+  ensureLock();
+  if(STATE === 'play' && MODE === 'invasion' && aimTarget){
+    lockMesh.position.set(aimTarget.x, aimTarget.y, aimTarget.z);
+    lockMesh.lookAt(camera.position);
+    const s = 1 + Math.sin(t * 8) * 0.12;                   // 두근두근 펄스
+    lockMesh.scale.set(s, s, s);
+    lockMesh.visible = true;
+  } else {
+    lockMesh.visible = false;
+  }
+  const ch = el('crosshair');
+  if(ch) ch.classList.toggle('locked', !!(aimTarget && STATE === 'play' && MODE === 'invasion'));
+}
 function fireBullet(){
   if(STATE !== 'play' || MODE !== 'invasion' || fireCool > 0) return;
   fireCool = 0.16;
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);        // 카메라가 보는 방향 = 조준 방향
+  const aim = new THREE.Vector3();
+  camera.getWorldDirection(aim);        // 기본: 카메라가 보는 방향
+  const ox = pX, oy = pY + 1.5, oz = pZ;
+  let dx = aim.x, dy = aim.y, dz = aim.z;
+  const t = aimTarget || pickTarget();  // 락온된 적이 있으면 그쪽으로 자동 조준
+  if(t){
+    dx = t.x - ox; dy = t.y - oy; dz = t.z - oz;
+    const l = Math.hypot(dx, dy, dz) || 1; dx/=l; dy/=l; dz/=l;
+  }
   const speed = 42;
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), new THREE.MeshBasicMaterial({ color: 0xFFE066, fog:false }));
-  m.position.set(pX + dir.x*1.2, pY + 1.5 + dir.y*1.2, pZ + dir.z*1.2);
+  m.position.set(ox + dx*1.2, oy + dy*1.2, oz + dz*1.2);
   scene.add(m);
-  bullets.push({ mesh:m, vx:dir.x*speed, vy:dir.y*speed, vz:dir.z*speed, life:1.3 });
+  bullets.push({ mesh:m, vx:dx*speed, vy:dy*speed, vz:dz*speed, life:1.3 });
   tone(680, 0.05, 'square', 0.05, 520);
   muzzleFlash(m.position.x, m.position.y, m.position.z);
 }
@@ -2321,6 +2367,7 @@ function pauseGame(){
   el('touchUI').style.display = 'none';
   el('crosshair').style.display = 'none';
   el('pauseScreen').style.display = 'flex';
+  if(lockMesh) lockMesh.visible = false;
   Object.keys(keys).forEach(k=>keys[k]=false);   // 눌린 키 해제(정지 중 이동 방지)
 }
 function resumeGame(){
@@ -2590,7 +2637,7 @@ function update(dt){
       }
     }
 
-    // 침공 모드: 적 스폰·이동, 총알, 무적/발사 쿨다운
+    // 침공 모드: 적 스폰·이동, 총알, 무적/발사 쿨다운, 에임 락온
     if(MODE === 'invasion'){
       fireCool = Math.max(0, fireCool - dt);
       invuln = Math.max(0, invuln - dt);
@@ -2601,6 +2648,8 @@ function update(dt){
       }
       updateEnemies(dt, t);
       updateBullets(dt);
+      aimTarget = pickTarget();      // 조준점 근처 적을 락온
+      updateLockReticle(t);
     }
 
     // 문제 배너: 가까운 미해결 게이트 (바뀔 때만 갱신)
