@@ -308,7 +308,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.10</div>
+    <div id="verTag">v3.11</div>
   </div>
 </div>
 
@@ -2227,9 +2227,12 @@ function requestLook(){   // PC에서 마우스만 움직여도 시점이 돌도
 
   // 포인터락 중: 마우스 이동 = 시점 회전 / 락 해제 상태: 드래그(버튼 누른 채)로도 회전 가능
   let dragging = false, lx = 0, ly = 0;
+  document.getElementById('game').addEventListener('contextmenu', e=>{ if(STATE==='play') e.preventDefault(); });
   document.getElementById('game').addEventListener('mousedown', e=>{
-    if(e.button === 0 && STATE==='play' && MODE==='invasion'){ fireBullet(); }   // 침공 모드: 좌클릭으로 발사
-    if(!locked && STATE==='play'){ dragging = true; lx = e.clientX; ly = e.clientY; }
+    if(e.button === 0 && STATE==='play' && MODE==='invasion'){ fireBullet(); return; }   // 침공 좌클릭=발사만(시점 안 돌림)
+    // 락이 없을 때(프리뷰 등) 드래그로 시점 회전. 침공은 발사와 겹치지 않게 우클릭 드래그로.
+    const dragBtn = (MODE === 'invasion') ? 2 : 0;
+    if(e.button === dragBtn && !locked && STATE==='play'){ dragging = true; lx = e.clientX; ly = e.clientY; }
   });
   window.addEventListener('mouseup', ()=>{ dragging = false; });
   window.addEventListener('mousemove', e=>{
@@ -2575,9 +2578,12 @@ function update(dt){
     if(keys['arrowleft'] || keys['a']) r -= 1;    // 왼쪽
     f += -stickY;                                  // 조이스틱 위 = 앞으로
     r += stickX;                                   // 조이스틱 오른쪽 = 오른쪽으로
-    // 카메라 방향(camYaw) 기준 전후·좌우를 월드 좌표로 변환
-    const fwdX = -Math.sin(camYaw), fwdZ = -Math.cos(camYaw);
-    const rgtX =  Math.cos(camYaw), rgtZ = -Math.sin(camYaw);
+    // 침공 모드는 '앞으로 달리며 쏘는' 모드라 이동을 골 방향(-Z)에 고정한다.
+    // → 마우스로 시점을 돌려 조준해도 달리는 방향이 휘지 않음(총만 겨눔).
+    // 섬·타워는 로블록스식으로 카메라(camYaw)가 보는 쪽이 '앞'.
+    const moveYaw = (MODE === 'invasion') ? 0 : camYaw;
+    const fwdX = -Math.sin(moveYaw), fwdZ = -Math.cos(moveYaw);
+    const rgtX =  Math.cos(moveYaw), rgtZ = -Math.sin(moveYaw);
     let ix = f*fwdX + r*rgtX;
     let iz = f*fwdZ + r*rgtZ;
     const il = Math.hypot(ix, iz);
