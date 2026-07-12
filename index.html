@@ -344,7 +344,7 @@
     </div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.11</div>
+    <div id="verTag">v4.0</div>
   </div>
 </div>
 
@@ -2448,6 +2448,7 @@ let GRADE = 1;
 let coinCount = 0;
 let checkpoint = { x:0, y:2, z:0 };
 let stats, shake = 0, menuT = 0, bannerGate = null;
+let runStreak = 0;   // 이번 판 연속 정답
 
 const el = id => document.getElementById(id);
 const toastEl = el('toast');
@@ -2541,6 +2542,7 @@ function startGame(){
   buildCourse(GRADE, STAGE);
   runCoins = 0;
   stats = { math:{ok:0,wrong:0}, ko:{ok:0,wrong:0}, en:{ok:0,wrong:0}, falls:0 };
+  runStreak = 0;
   checkpoint = { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z };
   pX = spawnPos.x; pY = spawnPos.y; pZ = spawnPos.z; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
   const inv = (MODE === 'invasion');
@@ -2698,7 +2700,8 @@ function answerDoor(gate, idx){
     if(REVIEW_MODE){ report.review = (report.review||[]).filter(x => x.main !== gate.q.main); }  // 복습에서 맞히면 큐에서 제거
     coinCount += 5; runCoins += 5; markDirty();
     sfx.correct();
-    toast(pick(GOOD), 1400);
+    runStreak++;
+    toast(runStreak >= 3 ? ('🔥 ' + runStreak + '연속! ' + pick(GOOD)) : pick(GOOD), 1400);
     const d = gate.doors[idx];
     burst(d.mesh.position.x, gate.platTop + 2, d.mesh.position.z, 26, [0xFFC93C, 0xFF6B5E, 0x3ECF8E, 0xffffff]);
     // 간판 교체
@@ -2718,6 +2721,7 @@ function answerDoor(gate, idx){
     report.sub[subKey].wrong++;
     bumpConcept(gate.q, false);
     pushReview(gate.q);
+    runStreak = 0;
     gate.tries = (gate.tries || 0) + 1;
     const mk_ = subKey + '|' + gate.q.main + '|' + gate.q.correct;
     report.missed[mk_] = (report.missed[mk_] || 0) + 1;
