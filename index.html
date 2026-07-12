@@ -151,6 +151,16 @@
     display:flex;align-items:center;justify-content:center;font-family:inherit;
   }
   #jumpBtn:active{transform:translateY(4px);box-shadow:0 2px 0 var(--ink);}
+  #fireBtn{
+    position:absolute;right:130px;bottom:44px;width:80px;height:80px;border-radius:50%;
+    background:var(--coral);border:3px solid var(--ink);box-shadow:0 6px 0 var(--ink);
+    font-size:15px;line-height:1.05;font-weight:900;color:#fff;pointer-events:auto;display:none;
+    align-items:center;justify-content:center;font-family:inherit;}
+  #fireBtn:active{transform:translateY(4px);box-shadow:0 2px 0 var(--ink);}
+  #crosshair{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-52%);z-index:19;display:none;
+    font-size:30px;font-weight:900;color:rgba(255,255,255,.9);text-shadow:0 0 4px rgba(0,0,0,.5);
+    pointer-events:none;}
 
   #keysHint{
     position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
@@ -274,8 +284,9 @@
     <h1>점프 퀴즈 아일랜드</h1>
     <div class="tag" id="tagLine">뛰고 · 풀고 · 모으자!</div>
     <div class="modeRow">
-      <button class="modePill on" data-m="island">🏝️ 섬 모드</button>
-      <button class="modePill" data-m="tower">🗼 타워 모드</button>
+      <button class="modePill on" data-m="island">🏝️ 섬</button>
+      <button class="modePill" data-m="tower">🗼 타워</button>
+      <button class="modePill" data-m="invasion">👾 침공</button>
     </div>
     <div class="gradeRow">
       <button class="gradePill on" data-g="1">1학년</button>
@@ -296,7 +307,7 @@
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.8</div>
+    <div id="verTag">v3.9</div>
   </div>
 </div>
 
@@ -374,8 +385,12 @@
 <div id="touchUI">
   <div id="lookPad"></div>
   <div id="stickBase"><div id="stickKnob"></div></div>
+  <button id="fireBtn">쏘기<br>🔫</button>
   <button id="jumpBtn">점프!</button>
 </div>
+
+<!-- 조준점(침공 모드) -->
+<div id="crosshair">＋</div>
 
 <!-- 조작 힌트 -->
 <div id="keysHint" class="card"></div>
@@ -524,7 +539,7 @@ function profKey(g){ return 'jqi-save-' + g; }
 function markDirty(){ dirty = true; }
 async function saveProfile(){
   dirty = false; lastSaveT = performance.now();
-  const data = { coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared, towerCleared: towerCleared, report: report, best: best };
+  const data = { coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared, towerCleared: towerCleared, invasionCleared: invasionCleared, report: report, best: best };
   await storeSet(profKey(GRADE), JSON.stringify(data));
 }
 async function loadProfile(g){
@@ -539,6 +554,8 @@ async function loadProfile(g){
   while(cleared.length < 4) cleared.push(false);
   towerCleared = (d && d.towerCleared) || [false, false, false];
   while(towerCleared.length < 3) towerCleared.push(false);
+  invasionCleared = (d && d.invasionCleared) || [false, false, false];
+  while(invasionCleared.length < 3) invasionCleared.push(false);
   best = (d && d.best) || {};
   report = (d && d.report && d.report.sub) ? d.report : newReport();
   if(STAGE > 0 && !stageUnlocked(STAGE)) STAGE = 0;
@@ -1181,6 +1198,13 @@ let starMesh = null;
 let bossGroup = null, bossBaseY = 0, bossHitT = 0, bossDead = false, bossBob = 0;
 let shots = [];
 
+// 침공 모드 전투: 적(박쥐·외계인) + 총알
+let enemies = [];      // {group, x, y, z, hp, type, hitT, ph, wingT}
+let bullets = [];      // {mesh, vx, vy, vz, life}
+let hearts = 3;        // 남은 하트(생명). 0이면 체크포인트로 복귀(코인 감소 없음)
+const MAX_HEARTS = 3;
+let invuln = 0, enemySpawnT = 0, fireCool = 0, enemiesBeat = 0;
+
 // 로블록스식 시점: 마우스/드래그로 카메라를 돌리고, 이동은 카메라가 보는 방향 기준
 const DEF_PITCH = 0.56, CAM_DIST = 10.2;
 let camDist = CAM_DIST;   // 실제 카메라 거리(게이트 근처에서 뒤로 빠져 문 전체가 보이게 이징)
@@ -1516,26 +1540,31 @@ let STAGE = 0;
 let MODE = 'island';                       // 'island'(가로 달리기) | 'tower'(수직 등반)
 let cleared = [false, false, false, false];
 let towerCleared = [false, false, false];  // 타워 3개 클리어 여부 (세이브에 추가, 없으면 기본값)
+let invasionCleared = [false, false, false]; // 침공 3개 클리어 여부
 const ISLAND_EMOJI = ['🏝️','💎','🚀','👑'];
 const ISLAND_NAMES = ['하늘 섬','반짝 동굴','둥둥 우주','보스 성'];
 const TOWER_NAMES  = ['하늘 타워','반짝 타워','우주 타워'];
+const INVASION_NAMES = ['박쥐 습격','외계 침공','우주 대격전'];
+const INVASION_ENEMY = ['bat','alien','mix'];   // 스테이지별 적 종류
 function stageUnlocked(si){
   if(si === 0) return true;
   if(si === 3) return cleared[0] && cleared[1] && cleared[2];
   return cleared[si-1];
 }
 function stageUnlockedTower(si){ return si === 0 ? true : !!towerCleared[si-1]; }
-function stageName(si){ return MODE === 'tower' ? TOWER_NAMES[si] : ISLAND_NAMES[si]; }
-function maxStageIdx(){ return MODE === 'tower' ? 2 : STAGES.length - 1; }
-function isUnlocked(si){ return MODE === 'tower' ? stageUnlockedTower(si) : stageUnlocked(si); }
-function isCleared(si){ return MODE === 'tower' ? !!towerCleared[si] : !!cleared[si]; }
+function stageUnlockedInv(si){ return si === 0 ? true : !!invasionCleared[si-1]; }
+function stageName(si){ return MODE === 'tower' ? TOWER_NAMES[si] : MODE === 'invasion' ? INVASION_NAMES[si] : ISLAND_NAMES[si]; }
+function maxStageIdx(){ return (MODE === 'tower' || MODE === 'invasion') ? 2 : STAGES.length - 1; }
+function isUnlocked(si){ return MODE === 'tower' ? stageUnlockedTower(si) : MODE === 'invasion' ? stageUnlockedInv(si) : stageUnlocked(si); }
+function isCleared(si){ return MODE === 'tower' ? !!towerCleared[si] : MODE === 'invasion' ? !!invasionCleared[si] : !!cleared[si]; }
+function stageEmoji(si){ return MODE === 'tower' ? '🗼' : MODE === 'invasion' ? '👾' : ISLAND_EMOJI[si]; }
 function updateStageRow(){
   document.querySelectorAll('.stageCard').forEach(b=>{
     const si = Number(b.dataset.s);
-    // 타워 모드에는 보스(3번) 카드 숨김
-    if(MODE === 'tower' && si === 3){ b.style.display = 'none'; return; }
+    // 타워·침공 모드에는 4번째(보스) 카드 숨김 (3스테이지만)
+    if((MODE === 'tower' || MODE === 'invasion') && si === 3){ b.style.display = 'none'; return; }
     b.style.display = '';
-    b.childNodes[0].nodeValue = (MODE === 'tower') ? '🗼' : ISLAND_EMOJI[si];
+    b.childNodes[0].nodeValue = stageEmoji(si);
     b.querySelector('span').textContent = stageName(si);
     const un = isUnlocked(si);
     b.classList.toggle('locked', !un);
@@ -1676,15 +1705,23 @@ function buildCourse(grade, si){
   courseGroup = new THREE.Group();
   scene.add(courseGroup);
 
+  clearCombat();
   if(MODE === 'tower'){
     buildTowerCourse(grade, si);
+    return;
+  }
+  if(MODE === 'invasion'){
+    buildForwardCourse(grade, si, S);   // 섬과 같은 전진 코스 + 전투는 update에서
     return;
   }
   if(S.boss){
     buildBossCourse(grade);
     return;
   }
-
+  buildForwardCourse(grade, si, S);
+}
+// 앞으로 전진하는 코스(섬·침공 공용): 발판 배치 + 퀴즈 문 + 골인
+function buildForwardCourse(grade, si, S){
   const topMax = (si === 2) ? 3.4 : 2.6;
   let z = 0, top = 0;
   addPlat(0, 0, 0, 12, 12, { color: S.startCol });   // 시작 섬
@@ -1891,6 +1928,145 @@ function bossDefeat(){
   setTimeout(()=>{ if(STATE === 'play') finishGame(); }, 1500);
 }
 
+// ---------- 침공 모드 전투 ----------
+function clearCombat(){
+  enemies.forEach(e=>{ scene.remove(e.group); e.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); });
+  bullets.forEach(b=>{ scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); });
+  enemies = []; bullets = [];
+}
+function makeEnemy(type, x, y, z){
+  const g = new THREE.Group();
+  if(type === 'bat'){
+    mk(g, new THREE.BoxGeometry(0.7,0.6,0.55), 0x5A4A78, 0,0,0);            // 몸통
+    mk(g, new THREE.ConeGeometry(0.12,0.24,4), 0x5A4A78, -0.22,0.42,0);     // 귀
+    mk(g, new THREE.ConeGeometry(0.12,0.24,4), 0x5A4A78,  0.22,0.42,0);
+    const wl = mk(g, new THREE.BoxGeometry(0.7,0.5,0.06), 0x7A6AA0, -0.62,0.04,0, 0,0,0.35);  // 날개
+    const wr = mk(g, new THREE.BoxGeometry(0.7,0.5,0.06), 0x7A6AA0,  0.62,0.04,0, 0,0,-0.35);
+    mk(g, new THREE.SphereGeometry(0.09,8,8), 0xFFF04D, -0.16,0.05,-0.3);   // 눈(정면 -z)
+    mk(g, new THREE.SphereGeometry(0.09,8,8), 0xFFF04D,  0.16,0.05,-0.3);
+    g.userData.wings = [wl, wr];
+  } else {  // alien
+    mk(g, new THREE.SphereGeometry(0.42,10,8), 0x6BD36B, 0,0.1,0);          // 머리
+    mk(g, new THREE.CylinderGeometry(0.5,0.55,0.18,14), 0x9AE6B0, 0,-0.28,0); // UFO 받침
+    mk(g, new THREE.SphereGeometry(0.2,10,8), 0xFFFFFF, 0,0.16,-0.28);      // 큰 눈
+    mk(g, new THREE.SphereGeometry(0.1,8,8), 0x223, 0,0.16,-0.42);
+    mk(g, new THREE.CylinderGeometry(0.02,0.02,0.2,6), 0x4FA84A, 0,0.55,0); // 더듬이
+    mk(g, new THREE.SphereGeometry(0.06,8,8), 0xFF6B5E, 0,0.68,0);
+  }
+  g.position.set(x, y, z);
+  scene.add(g);
+  enemies.push({ group:g, x, y, z, hp: (type==='alien'?2:1), type, hitT:0, ph: (enemies.length%7)*0.9, wingT:0 });
+}
+function invStage(){ return INVASION_ENEMY[Math.min(STAGE,2)]; }
+function spawnEnemyWave(){
+  if(enemies.length >= 7) return;
+  const kind = invStage();
+  const n = 1 + ((STAGE + enemiesBeat) % 3 === 0 ? 1 : 0);
+  for(let i=0;i<n;i++){
+    const type = kind === 'mix' ? ((enemies.length + i) % 2 ? 'alien' : 'bat') : kind;
+    const ex = pX + ((i%2?1:-1)) * (2 + (enemiesBeat*1.3 + i*2.1) % 6);   // 좌우로 흩뿌림
+    const ez = pZ - (13 + ((enemiesBeat*2.7 + i*3.3) % 9));               // 앞쪽(-Z)
+    const ey = pY + 1.4 + ((enemiesBeat + i) % 3) * 0.8;                  // 눈높이 근처(조준 쉽게)
+    makeEnemy(type, ex, ey, ez);
+  }
+}
+function updateEnemies(dt, t){
+  const sp = 2.6 + STAGE * 0.5;
+  for(let i=enemies.length-1;i>=0;i--){
+    const e = enemies[i];
+    if(!e) continue;   // hitPlayer→하트0→clearCombat로 배열이 비워질 수 있어 안전 처리
+    const dx = pX - e.x, dy = (pY + 1.3) - e.y, dz = pZ - e.z;
+    const d = Math.hypot(dx, dy, dz) || 1;
+    e.x += dx/d * sp * dt;
+    e.y += dy/d * sp * dt + Math.sin((t + e.ph) * 4) * dt * 0.9;   // 위아래 흔들며
+    e.z += dz/d * sp * dt;
+    e.group.position.set(e.x, e.y, e.z);
+    e.group.rotation.y = Math.atan2(dx, dz);
+    e.hitT = Math.max(0, e.hitT - dt);
+    e.group.scale.setScalar(1 + e.hitT * 0.6);
+    if(e.type === 'bat' && e.group.userData.wings){   // 날갯짓
+      e.wingT += dt * 16;
+      const f = Math.sin(e.wingT) * 0.6;
+      e.group.userData.wings[0].rotation.z = 0.35 + f;
+      e.group.userData.wings[1].rotation.z = -0.35 - f;
+    }
+    if(d < 1.4){ hitPlayer(); removeEnemy(i); }
+    else if(e.z > pZ + 7){ removeEnemy(i); }   // 뒤로 지나치면 사라짐
+  }
+}
+function removeEnemy(i){
+  const e = enemies[i];
+  if(!e) return;
+  scene.remove(e.group);
+  e.group.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); });
+  enemies.splice(i,1);
+}
+function popEnemy(i){
+  const e = enemies[i];
+  burst(e.x, e.y, e.z, 16, [0xFFC93C, 0xFF6B5E, 0x9B7BFF, 0xffffff]);
+  coinCount++; runCoins++; enemiesBeat++;
+  sfx.coin(); markDirty(); updateHUD();
+  removeEnemy(i);
+}
+function hitPlayer(){
+  if(invuln > 0) return;
+  invuln = 1.1;
+  hearts--;
+  sfx.wrong();
+  if(!REDUCE) shake = 0.5;
+  vZ += 6; vY = Math.max(vY, 4);   // 뒤로+위로 넉백
+  onGround = false; standOn = null;
+  updateHUD();
+  if(hearts <= 0){
+    hearts = MAX_HEARTS;
+    invuln = 1.4;
+    toast('앗! 다시 힘내자 💪', 1200);
+    pX = checkpoint.x; pY = checkpoint.y; pZ = checkpoint.z; vX=vY=vZ=0; onGround=false; standOn=null;
+    clearCombat();
+    enemySpawnT = 1.2;
+    updateHUD();
+  } else {
+    toast('❤️ 조심해!', 900);
+  }
+}
+function fireBullet(){
+  if(STATE !== 'play' || MODE !== 'invasion' || fireCool > 0) return;
+  fireCool = 0.16;
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);        // 카메라가 보는 방향 = 조준 방향
+  const speed = 42;
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), new THREE.MeshBasicMaterial({ color: 0xFFE066, fog:false }));
+  m.position.set(pX + dir.x*1.2, pY + 1.5 + dir.y*1.2, pZ + dir.z*1.2);
+  scene.add(m);
+  bullets.push({ mesh:m, vx:dir.x*speed, vy:dir.y*speed, vz:dir.z*speed, life:1.3 });
+  tone(680, 0.05, 'square', 0.05, 520);
+  muzzleFlash(m.position.x, m.position.y, m.position.z);
+}
+function muzzleFlash(x, y, z){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshBasicMaterial({ color:0xFFF3B0, fog:false, transparent:true, opacity:0.9 }));
+  m.position.set(x, y, z); scene.add(m);
+  particles.push({ mesh:m, vx:0, vy:0, vz:0, life:0.09, flash:true });
+}
+function updateBullets(dt){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.mesh.position.x += b.vx*dt; b.mesh.position.y += b.vy*dt; b.mesh.position.z += b.vz*dt;
+    b.life -= dt;
+    let done = b.life <= 0;
+    for(let j=enemies.length-1;j>=0;j--){
+      const e = enemies[j];
+      const dx = b.mesh.position.x - e.x, dy = b.mesh.position.y - e.y, dz = b.mesh.position.z - e.z;
+      if(dx*dx + dy*dy + dz*dz < 1.2){
+        e.hp--; e.hitT = 0.22;
+        tone(200, 0.07, 'square', 0.09, 130);
+        if(e.hp <= 0) popEnemy(j);
+        done = true; break;
+      }
+    }
+    if(done){ scene.remove(b.mesh); b.mesh.geometry.dispose(); b.mesh.material.dispose(); bullets.splice(i,1); }
+  }
+}
+
 // ---------- 파티클 ----------
 function burst(x, y, z, n, colorArr){
   for(let i=0;i<n;i++){
@@ -1913,6 +2089,12 @@ function updateParticles(dt){
   for(let i=particles.length-1;i>=0;i--){
     const p = particles[i];
     p.life -= dt;
+    if(p.flash){                       // 총구 섬광: 잠깐 커졌다 사라짐
+      p.mesh.scale.multiplyScalar(1 + dt*8);
+      if(p.mesh.material) p.mesh.material.opacity = Math.max(0, p.life/0.09);
+      if(p.life <= 0){ scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); particles.splice(i,1); }
+      continue;
+    }
     p.vy -= 18*dt;
     p.mesh.position.x += p.vx*dt;
     p.mesh.position.y += p.vy*dt;
@@ -1975,6 +2157,8 @@ window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
   base.addEventListener('pointercancel', release);
 
   jb.addEventListener('pointerdown', ev=>{ jumpBuf = 0.13; audioInit(); ev.preventDefault(); });
+  const fb = document.getElementById('fireBtn');
+  fb.addEventListener('pointerdown', ev=>{ fireBullet(); audioInit(); ev.preventDefault(); });
 })();
 
 // ---------- 시점 회전 (로블록스식) ----------
@@ -1997,7 +2181,10 @@ function requestLook(){   // PC에서 마우스만 움직여도 시점이 돌도
 
   // 포인터락 중: 마우스 이동 = 시점 회전 / 락 해제 상태: 드래그(버튼 누른 채)로도 회전 가능
   let dragging = false, lx = 0, ly = 0;
-  document.getElementById('game').addEventListener('mousedown', e=>{ if(!locked && STATE==='play'){ dragging = true; lx = e.clientX; ly = e.clientY; } });
+  document.getElementById('game').addEventListener('mousedown', e=>{
+    if(e.button === 0 && STATE==='play' && MODE==='invasion'){ fireBullet(); }   // 침공 모드: 좌클릭으로 발사
+    if(!locked && STATE==='play'){ dragging = true; lx = e.clientX; ly = e.clientY; }
+  });
   window.addEventListener('mouseup', ()=>{ dragging = false; });
   window.addEventListener('mousemove', e=>{
     if(STATE !== 'play') return;
@@ -2043,7 +2230,9 @@ function toast(msg, ms){
 function updateHUD(){
   el('coinChip').textContent = '🪙 ' + coinCount;
   const solved = gates.filter(g=>g.solved).length;
-  if(CURSTAGE && CURSTAGE.boss){
+  if(MODE === 'invasion'){
+    el('gateChip').textContent = (hearts > 0 ? '❤️'.repeat(hearts) : '💔') + ' · 🚪' + solved + '/' + (gates.length || 6);
+  } else if(CURSTAGE && CURSTAGE.boss){
     const hp = gates.length - solved;
     el('gateChip').textContent = hp > 0 ? ('👑 ' + '❤️'.repeat(hp)) : '👑 💀';
   } else {
@@ -2073,7 +2262,12 @@ function startGame(){
   stats = { math:{ok:0,wrong:0}, ko:{ok:0,wrong:0}, en:{ok:0,wrong:0}, falls:0 };
   checkpoint = { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z };
   pX = spawnPos.x; pY = spawnPos.y; pZ = spawnPos.z; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
-  camYaw = 0; camPitch = DEF_PITCH; camDist = CAM_DIST;   // 매 판 시작 때 시점 초기화
+  const inv = (MODE === 'invasion');
+  camYaw = 0; camPitch = inv ? 0.42 : DEF_PITCH; camDist = CAM_DIST;   // 침공은 조준 위해 시점을 조금 평평하게
+  // 침공 모드 전투 초기화
+  hearts = MAX_HEARTS; invuln = 0; fireCool = 0; enemySpawnT = 1.4; enemiesBeat = 0;
+  el('crosshair').style.display = inv ? 'block' : 'none';
+  el('fireBtn').style.display = (inv && IS_TOUCH) ? 'flex' : 'none';
   runT0 = performance.now();
   STATE = 'play';
   el('startScreen').style.display = 'none';
@@ -2084,14 +2278,18 @@ function startGame(){
   updateHUD();
   if(IS_TOUCH){ el('touchUI').style.display = 'block'; }
   const kh = el('keysHint');
-  kh.textContent = IS_TOUCH ? '🕹️ 왼쪽: 이동 · 오른쪽 버튼: 점프 · 화면 밀기: 시점 돌리기'
-                            : '이동: 방향키 / WASD · 점프: 스페이스 · 🖱️ 마우스로 시점 돌리기';
+  kh.textContent = inv ? (IS_TOUCH ? '🕹️ 이동 · 화면 밀어 조준 · 🔫 쏘기 · 점프!' : '이동: WASD · 마우스로 조준 · 🖱️ 클릭으로 쏘기 · 점프: 스페이스')
+                       : (IS_TOUCH ? '🕹️ 왼쪽: 이동 · 오른쪽 버튼: 점프 · 화면 밀기: 시점 돌리기'
+                                   : '이동: 방향키 / WASD · 점프: 스페이스 · 🖱️ 마우스로 시점 돌리기');
   kh.style.display = 'block'; kh.style.opacity = '1';
   setTimeout(()=>{ kh.style.opacity = '0'; }, 5000);
   setTimeout(()=>{ kh.style.display = 'none'; }, 5800);
   requestLook();   // PC: 시작하자마자 마우스로 시점 조작 가능하도록 (사용자 클릭 흐름 안에서 호출)
   el('nextStageBtn').classList.add('hidden');
-  toast((MODE==='tower' ? '🗼 ' + stageName(STAGE) + ' 등반!' : STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!'), 1300);
+  const startMsg = (MODE==='tower') ? '🗼 ' + stageName(STAGE) + ' 등반!'
+                 : inv ? '👾 ' + stageName(STAGE) + ' 시작! 적을 물리쳐!'
+                 : STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!';
+  toast(startMsg, 1300);
   audioInit();
 }
 function respawn(){
@@ -2109,6 +2307,9 @@ function goHome(){
   el('endScreen').style.display = 'none';
   el('hud').style.display = 'none';
   el('touchUI').style.display = 'none';
+  el('crosshair').style.display = 'none';
+  el('fireBtn').style.display = 'none';
+  clearCombat();
   hideBanner();
   el('startScreen').style.display = 'flex';
 }
@@ -2118,6 +2319,7 @@ function pauseGame(){
   STATE = 'pause';
   if(document.exitPointerLock) document.exitPointerLock();
   el('touchUI').style.display = 'none';
+  el('crosshair').style.display = 'none';
   el('pauseScreen').style.display = 'flex';
   Object.keys(keys).forEach(k=>keys[k]=false);   // 눌린 키 해제(정지 중 이동 방지)
 }
@@ -2126,6 +2328,7 @@ function resumeGame(){
   STATE = 'play';
   el('pauseScreen').style.display = 'none';
   if(IS_TOUCH) el('touchUI').style.display = 'block';
+  if(MODE === 'invasion') el('crosshair').style.display = 'block';
   requestLook();
 }
 function finishGame(){
@@ -2133,6 +2336,9 @@ function finishGame(){
   hideBanner();
   if(document.exitPointerLock) document.exitPointerLock();   // 커서 복귀 (엔드 화면 버튼 클릭용)
   el('touchUI').style.display = 'none';
+  el('crosshair').style.display = 'none';
+  el('fireBtn').style.display = 'none';
+  clearCombat();
   sfx.goal();
   burst(pX, pY+3, pZ, 60, [0xFF6B5E, 0xFFC93C, 0x3ECF8E, 0x4A90F4, 0x9B7BFF]);
   setTimeout(()=>burst(pX-3, pY+4, pZ-2, 40, [0xFF6B5E, 0xFFC93C, 0x9B7BFF]), 400);
@@ -2140,26 +2346,29 @@ function finishGame(){
   const totalWrong = stats.math.wrong + stats.ko.wrong + stats.en.wrong;
   const S = STAGES[STAGE];
   const isTower = (MODE === 'tower');
-  const emoji = isTower ? '🗼' : S.emoji;
-  if(isTower){ towerCleared[STAGE] = true; } else { cleared[STAGE] = true; }
+  const isInv = (MODE === 'invasion');
+  const emoji = isTower ? '🗼' : isInv ? '👾' : S.emoji;
+  if(isTower){ towerCleared[STAGE] = true; } else if(isInv){ invasionCleared[STAGE] = true; } else { cleared[STAGE] = true; }
   report.runs++;
   markDirty();
   updateStageRow();
   const nb = el('nextStageBtn');
   if(STAGE < maxStageIdx()){
     nb.classList.remove('hidden');
-    nb.textContent = '다음: ' + (isTower ? '🗼 ' : STAGES[STAGE+1].emoji + ' ') + stageName(STAGE+1) + ' ▶';
+    nb.textContent = '다음: ' + stageEmoji(STAGE+1) + ' ' + stageName(STAGE+1) + ' ▶';
   } else {
     nb.classList.add('hidden');
   }
   el('endTitle').textContent = S.boss ? '👑 보스를 물리쳤다!' :
-      ((totalWrong===0 && stats.falls===0)
+      isInv ? ('👾 ' + stageName(STAGE) + ' 격퇴! 🏆 (적 ' + enemiesBeat + '마리)')
+      : ((totalWrong===0 && stats.falls===0)
       ? (isTower ? '정상 정복! 완벽해 🌟' : '완벽 클리어! 천재잖아? 🌟')
       : (emoji + ' ' + stageName(STAGE) + (isTower ? ' 정상! 🏆' : ' 클리어! 🏆')));
   if(S.boss){ coinCount += 30; runCoins += 30; }
+  if(isInv){ coinCount += 20; runCoins += 20; }
   el('endCoins').textContent = '이번 모험 🪙 +' + runCoins + ' · 내 지갑 🪙 ' + coinCount;
   const elapsed = performance.now() - runT0;
-  const bestKey = (isTower ? 't' : '') + STAGE;
+  const bestKey = (isTower ? 't' : isInv ? 'v' : '') + STAGE;
   const prevBest = best[bestKey];
   const isRec = !prevBest || elapsed < prevBest;
   if(isRec) best[bestKey] = elapsed;
@@ -2381,6 +2590,19 @@ function update(dt){
       }
     }
 
+    // 침공 모드: 적 스폰·이동, 총알, 무적/발사 쿨다운
+    if(MODE === 'invasion'){
+      fireCool = Math.max(0, fireCool - dt);
+      invuln = Math.max(0, invuln - dt);
+      enemySpawnT -= dt;
+      if(enemySpawnT <= 0){
+        spawnEnemyWave();
+        enemySpawnT = Math.max(0.9, 2.4 - STAGE*0.4);
+      }
+      updateEnemies(dt, t);
+      updateBullets(dt);
+    }
+
     // 문제 배너: 가까운 미해결 게이트 (바뀔 때만 갱신)
     let near = null;
     if(gates.length && gates[0].spiral){
@@ -2587,7 +2809,8 @@ document.querySelectorAll('.modePill').forEach(b=>{
     MODE = m;
     audioInit();
     document.querySelectorAll('.modePill').forEach(x=>x.classList.toggle('on', x.dataset.m === MODE));
-    el('tagLine').textContent = (MODE === 'tower') ? '오르고 · 풀고 · 정상으로!' : '뛰고 · 풀고 · 모으자!';
+    el('tagLine').textContent = (MODE === 'tower') ? '오르고 · 풀고 · 정상으로!' :
+                                (MODE === 'invasion') ? '쏘고 · 점프하고 · 지켜라!' : '뛰고 · 풀고 · 모으자!';
     if(STAGE > maxStageIdx() || !isUnlocked(STAGE)) STAGE = 0;   // 잠긴/보스 선택 방지
     updateStageRow();
     buildDeco(STAGE);
