@@ -109,6 +109,26 @@
   #bMain{font-weight:900;font-size:30px;line-height:1.25;}
   #bMain.big{font-size:52px;}
   #bSub{font-weight:700;font-size:14px;color:#6b7f8e;margin-top:4px;}
+  #speakBtn{position:absolute;top:8px;right:10px;width:40px;height:40px;border-radius:12px;
+    border:2.5px solid var(--ink);background:#FFF;font-size:20px;cursor:pointer;pointer-events:auto;
+    box-shadow:0 3px 0 rgba(37,58,75,.6);line-height:1;}
+  #speakBtn:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(37,58,75,.6);}
+  #speakBtn.playing{background:#FFE38A;}
+  /* 시작화면 설정 토글 */
+  .optRow{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}
+  .optChip{padding:6px 12px;border-radius:12px;border:2.5px solid var(--ink);background:#fff;
+    font-weight:800;font-size:13px;color:#8494a1;cursor:pointer;box-shadow:0 3px 0 rgba(37,58,75,.5);}
+  .optChip.on{background:var(--leaf);color:#fff;}
+  .optChip:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(37,58,75,.5);}
+  /* 배움 카드 (오답 도우미) */
+  #learnPop{
+    position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);
+    width:min(520px, calc(100% - 28px));padding:14px 20px;z-index:24;text-align:center;
+    font-weight:800;font-size:17px;line-height:1.4;color:var(--ink);
+    background:#FFF6D8;border-color:#F0B429;display:none;opacity:0;
+    transition:opacity .2s ease, transform .2s ease;pointer-events:none;
+  }
+  #learnPop.show{display:block;opacity:1;transform:translateX(-50%) translateY(0);}
 
   /* ---------- 토스트 ---------- */
   #toast{
@@ -270,6 +290,7 @@
 
 <!-- 문제 배너 -->
 <div id="banner" class="card">
+  <button id="speakBtn" title="문제 읽어주기" aria-label="문제 읽어주기">🔊</button>
   <div id="bChip">➕ 수학</div>
   <div id="bMain">7 + 5 = ?</div>
   <div id="bSub">정답이 적힌 문으로 들어가!</div>
@@ -277,6 +298,9 @@
 
 <!-- 토스트 -->
 <div id="toast" class="card">정답이야! 🎉</div>
+
+<!-- 배움 카드(오답 도우미) -->
+<div id="learnPop" class="card"></div>
 
 <!-- 시작 화면 -->
 <div id="startScreen">
@@ -306,6 +330,11 @@
       <button class="btn ghost small" id="shopBtn">🎁 아이템 상점</button>
     </div>
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
+    <div class="optRow">
+      <button class="optChip on" id="ttsChip">🔊 읽어주기</button>
+      <button class="optChip on" id="adaptChip">🎯 맞춤 난이도</button>
+      <button class="optChip" id="reviewChip">📒 복습하기</button>
+    </div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
     <div id="verTag">v3.11</div>
@@ -1278,6 +1307,12 @@ function genQuestion(sub, grade){
   if(sub === 'ko') return genKo(grade);
   return genEn(grade);
 }
+// 복습 모드면 틀렸던 문제(사본)를 먼저 소비, 떨어지면 새 문제로
+let reviewFeed = [];
+function pickQuestion(sub, grade){
+  if(REVIEW_MODE && reviewFeed.length) return reviewFeed.shift();
+  return genQuestion(sub, grade);
+}
 
 // ---------- THREE 기본 ----------
 let scene, camera, renderer, clock;
@@ -1731,7 +1766,7 @@ function addCoin(x, y, z){
   coins.push({ mesh, x, z, y, taken:false });
 }
 function addGate(gz, top, sub, grade){
-  const q = genQuestion(sub, grade);
+  const q = pickQuestion(sub, grade);
   const wallZ = gz - 2;
   const wallMat = new THREE.MeshLambertMaterial({ color: CURSTAGE.wall, transparent:true });
   const fadeMats = [wallMat];
@@ -1880,7 +1915,7 @@ const TW = { R:7.2, DTH:42*Math.PI/180, DY:1.42, PER:5, FLOORS:6, TH0:Math.PI };
 
 // 나선 위 한 지점에 회전된 퀴즈 문(3문 벽)을 세운다. th=진행 각도, (px,pz)=착지대 중심.
 function addSpiralGate(px, pz, th, top, sub, grade){
-  const q = genQuestion(sub, grade);
+  const q = pickQuestion(sub, grade);
   // 진행(접선) 방향 n = (-sinθ, cosθ), 측면(반지름) 방향 s = (cosθ, sinθ)
   const nx = -Math.sin(th), nz = Math.cos(th);
   const sx =  Math.cos(th), sz = Math.sin(th);
@@ -2384,15 +2419,65 @@ function updateHUD(){
     el('gateChip').textContent = '🚪 ' + solved + '/' + (gates.length || 6);
   }
 }
+// ---------- 읽어주기 (Web Speech API) ----------
+let TTS_ON = true;                 // 기기 설정(프로필과 별개)
+let lastSpeak = null;              // 테스트용 기록
+let bannerQ = null;                // 현재 배너에 뜬 문제
+const TTS = (typeof window !== 'undefined' && window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined') ? window.speechSynthesis : null;
+function pickVoice(lang){
+  if(!TTS) return null;
+  const pref = (lang === 'en') ? 'en' : 'ko';
+  const vs = TTS.getVoices() || [];
+  return vs.find(v => v.lang && v.lang.toLowerCase().startsWith(pref)) || null;
+}
+function speakSeg(text, lang){
+  if(!TTS || !text) return;
+  const u = new SpeechSynthesisUtterance(String(text));
+  u.lang = (lang === 'en') ? 'en-US' : 'ko-KR';
+  const v = pickVoice(lang); if(v) u.voice = v;
+  u.rate = 0.95; u.pitch = 1.05;
+  TTS.speak(u);
+}
+function readQuestion(q){
+  if(!q || !TTS_ON) return;
+  lastSpeak = (q.read || []).map(s => s.t).join(' · ');   // 음성 미지원 기기여도 기록은 남김
+  if(!TTS) return;
+  try{ TTS.cancel(); }catch(e){}
+  const btn = el('speakBtn'); if(btn){ btn.classList.add('playing'); }
+  (q.read || []).forEach(s => speakSeg(s.t, s.l));
+  if(TTS && btn){
+    const u = new SpeechSynthesisUtterance(' '); u.volume = 0;
+    u.onend = ()=>{ btn.classList.remove('playing'); };
+    TTS.speak(u);
+  }
+}
+function stopSpeak(){ if(TTS){ try{ TTS.cancel(); }catch(e){} } const b=el('speakBtn'); if(b) b.classList.remove('playing'); }
+
 function showBanner(q){
+  bannerQ = q;
   el('bChip').textContent = q.chip;
   el('bChip').style.background = q.color;
   el('bMain').textContent = q.main;
   el('bMain').className = q.big ? 'big' : '';
   el('bSub').textContent = q.hint;
+  el('speakBtn').style.display = (TTS && TTS_ON) ? 'block' : 'none';
   el('banner').classList.add('show');
+  // 1학년(아직 글을 못 읽는 아이)은 문제를 자동으로 읽어줌
+  if(TTS_ON && GRADE === 1) readQuestion(q);
 }
-function hideBanner(){ el('banner').classList.remove('show'); }
+// 배움 카드: 두 번 이상 틀리면 친절한 풀이를 보여주고 읽어줌 (벌 대신 배움)
+let learnTimer = null;
+function showLearn(text){
+  if(!text) return;
+  const p = el('learnPop');
+  p.textContent = '💡 ' + text;
+  p.classList.add('show');
+  clearTimeout(learnTimer);
+  learnTimer = setTimeout(()=>{ p.classList.remove('show'); }, 4600);
+  if(TTS_ON && TTS){ try{ TTS.cancel(); }catch(e){} speakSeg(text, 'ko'); }
+}
+function hideLearn(){ el('learnPop').classList.remove('show'); }
+function hideBanner(){ el('banner').classList.remove('show'); stopSpeak(); hideLearn(); }
 
 const GOOD = ['정답이야! 🎉','대단해! ✨','천재인걸? 🌟','완벽해! 💯'];
 const NOPE = ['괜찮아, 다시 도전! 💪','음~ 다시 생각해볼까? 🤔','아깝다! 한 번 더! 🍀'];
@@ -2431,7 +2516,8 @@ function startGame(){
   setTimeout(()=>{ kh.style.display = 'none'; }, 5800);
   requestLook();   // PC: 시작하자마자 마우스로 시점 조작 가능하도록 (사용자 클릭 흐름 안에서 호출)
   el('nextStageBtn').classList.add('hidden');
-  const startMsg = (MODE==='tower') ? '🗼 ' + stageName(STAGE) + ' 등반!'
+  const startMsg = REVIEW_MODE ? '📒 복습! 틀렸던 문제에 다시 도전해요'
+                 : (MODE==='tower') ? '🗼 ' + stageName(STAGE) + ' 등반!'
                  : inv ? '👾 ' + stageName(STAGE) + ' 시작! 적을 물리쳐!'
                  : STAGES[STAGE].emoji + ' ' + STAGES[STAGE].name + ' 출발!';
   toast(startMsg, 1300);
@@ -2456,7 +2542,19 @@ function goHome(){
   el('fireBtn').style.display = 'none';
   clearCombat();
   hideBanner();
+  REVIEW_MODE = false;
   el('startScreen').style.display = 'flex';
+}
+// 복습 아일랜드: 틀렸던 문제(복습 큐)만 모아 다시 도전
+function startReviewRun(){
+  const queue = report.review || [];
+  if(!queue.length){ toast('복습할 문제가 없어요! 다 잘했어요 👏', 1600); return; }
+  REVIEW_MODE = true;
+  reviewFeed = queue.slice();
+  MODE = 'island';
+  document.querySelectorAll('.modePill').forEach(x=>x.classList.toggle('on', x.dataset.m === 'island'));
+  STAGE = 0;
+  startGame();
 }
 // 일시정지 (놀는 중에만). 물리는 STATE!=='play'라 저절로 멈춤. 움직이는 발판은 위에서 계속 태워줌
 function pauseGame(){
@@ -2505,7 +2603,8 @@ function finishGame(){
   } else {
     nb.classList.add('hidden');
   }
-  el('endTitle').textContent = S.boss ? '👑 보스를 물리쳤다!' :
+  el('endTitle').textContent = REVIEW_MODE ? '📒 복습 완료! 다시 도전해줘서 멋져 🌟' :
+      S.boss ? '👑 보스를 물리쳤다!' :
       isInv ? ('👾 ' + stageName(STAGE) + ' 격퇴! 🏆 (적 ' + enemiesBeat + '마리)')
       : ((totalWrong===0 && stats.falls===0)
       ? (isTower ? '정상 정복! 완벽해 🌟' : '완벽 클리어! 천재잖아? 🌟')
@@ -2522,6 +2621,7 @@ function finishGame(){
       (isRec ? ' · 최고 기록 달성! 🎉' : ' · 최고 기록 ' + fmtTime(prevBest));
   markDirty();
   saveProfile();
+  REVIEW_MODE = false;   // 복습 런 종료 → 다시하기/다음은 일반 모드
   const rows = [
     { icon:'➕ 수학', k:'math', s: stats.math },
     { icon:'📚 국어', k:'ko', s: stats.ko },
@@ -2560,12 +2660,14 @@ function answerDoor(gate, idx){
       if(gates.every(g=>g.solved)) setTimeout(bossDefeat, 750);
     }
     hideBanner();
+    hideLearn();
     updateHUD();
   } else {
     stats[subKey].wrong++;
     report.sub[subKey].wrong++;
     bumpConcept(gate.q, false);
     pushReview(gate.q);
+    gate.tries = (gate.tries || 0) + 1;
     const mk_ = subKey + '|' + gate.q.main + '|' + gate.q.correct;
     report.missed[mk_] = (report.missed[mk_] || 0) + 1;
     const mkeys = Object.keys(report.missed);
@@ -2577,6 +2679,9 @@ function answerDoor(gate, idx){
     sfx.wrong();
     if(!REDUCE) shake = 0.35;
     toast(pick(NOPE), 1300);
+    // 벌 대신 배움: 1학년은 한 번, 그 위는 두 번 틀리면 친절한 풀이를 보여줌
+    const revealAt = (GRADE === 1) ? 1 : 2;
+    if(gate.tries >= revealAt) setTimeout(()=>showLearn(gate.q.explain), 600);
     const d = gate.doors[idx];
     const orig = d.mesh.material.color.getHex();
     d.mesh.material.color.setHex(0xE05555);
@@ -3003,6 +3108,27 @@ document.getElementById('controlsHint').innerHTML = IS_TOUCH
   ? '🕹️ 왼쪽 조이스틱 이동 · 오른쪽 버튼 점프 · 👆 화면을 밀어 시점 돌리기'
   : '⌨️ WASD/방향키 이동 · 스페이스 점프 · 🖱️ 마우스로 시점 돌리기';
 
+// ---------- 설정(읽어주기 / 맞춤 난이도) & 복습 ----------
+async function loadOpts(){
+  try{
+    const raw = await storeGet('jqi-opt');
+    if(raw){ const o = JSON.parse(raw); if(typeof o.tts === 'boolean') TTS_ON = o.tts; if(typeof o.adapt === 'boolean') ADAPT = o.adapt; }
+  }catch(e){}
+  syncOptChips();
+}
+async function saveOpts(){ await storeSet('jqi-opt', JSON.stringify({ tts:TTS_ON, adapt:ADAPT })); }
+function syncOptChips(){
+  el('ttsChip').classList.toggle('on', TTS_ON);
+  el('adaptChip').classList.toggle('on', ADAPT);
+  if(!TTS) el('ttsChip').style.display = 'none';   // 음성 미지원 기기면 토글 숨김
+}
+el('speakBtn').addEventListener('click', e=>{ e.stopPropagation(); audioInit(); if(bannerQ) readQuestion(bannerQ); });
+el('ttsChip').addEventListener('click', ()=>{ audioInit(); TTS_ON = !TTS_ON; if(!TTS_ON) stopSpeak(); syncOptChips(); saveOpts();
+  toast(TTS_ON ? '문제를 읽어줄게요 🔊' : '읽어주기를 껐어요 🔇', 1100); });
+el('adaptChip').addEventListener('click', ()=>{ audioInit(); ADAPT = !ADAPT; syncOptChips(); saveOpts();
+  toast(ADAPT ? '약한 부분을 더 연습해요 🎯' : '맞춤 난이도를 껐어요', 1100); });
+el('reviewChip').addEventListener('click', ()=>{ audioInit(); startReviewRun(); });
+
 // ---------- 시작 ----------
 init3D();
 buildPlayer();
@@ -3010,6 +3136,7 @@ buildDeco(0);
 buildCourse(1, 0);       // 메뉴 배경용
 pX = 0; pY = 0.05; pZ = 0;
 loadProfile(1);
+loadOpts();
 clock = new THREE.Clock();
 renderer.setAnimationLoop(animate);
 </script>
