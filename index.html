@@ -218,7 +218,7 @@
   .cell.equipped{border-color:var(--coral);box-shadow:0 3px 0 var(--coral);background:#FFF1EE;}
 
   #reportScreen{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-    padding:14px;z-index:40;background:rgba(37,58,75,.38);}
+    padding:14px;z-index:60;background:rgba(37,58,75,.9);transform:translateZ(0);}
   #reportCard{max-width:440px;width:100%;max-height:92vh;overflow-y:auto;padding:18px;touch-action:pan-y;}
   #repHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
   #reportRow{margin-top:10px;}
@@ -294,9 +294,9 @@
       <button class="btn ghost small" id="shopBtn">🎁 아이템 상점</button>
     </div>
     <div id="profileNote">학년마다 지갑과 아이템이 따로 저장돼요</div>
-    <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트</button></div>
+    <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v3.7</div>
+    <div id="verTag">v3.8</div>
   </div>
 </div>
 
@@ -2597,29 +2597,30 @@ document.querySelectorAll('.modePill').forEach(b=>{
 });
 (function setupReportGate(){
   const rb = document.getElementById('reportBtn');
-  let pressT = null;
+  const LABEL = '📊 부모님 리포트 (꾹)';
+  let pressT = null, holding = false;
+  rb.style.touchAction = 'none';   // 누르고 있는 동안 스크롤 제스처로 취소되지 않게
   rb.addEventListener('pointerdown', e=>{
     e.preventDefault();
+    if(rb.setPointerCapture){ try{ rb.setPointerCapture(e.pointerId); }catch(_){ } }  // 손가락이 살짝 움직여도 계속 받기
     audioInit();
-    rb.textContent = '꾹 누르는 중…';
-    pressT = setTimeout(()=>{
-      pressT = null;
-      rb.textContent = '📊 부모님 리포트';
-      openReport();
-    }, 1600);
+    holding = true;
+    rb.textContent = '꾹 누르는 중… 🔒';
+    clearTimeout(pressT);
+    pressT = setTimeout(()=>{ pressT = null; holding = false; rb.textContent = LABEL; openReport(); }, 1200);
   });
-  function cancel(){
-    if(pressT){
-      clearTimeout(pressT); pressT = null;
-      toast('부모님용이에요! 1.5초 이상 꾹 눌러요 👆', 1300);
-    }
-    rb.textContent = '📊 부모님 리포트';
+  function release(){
+    if(pressT){ clearTimeout(pressT); pressT = null; if(holding) toast('부모님용이에요! 1초 넘게 꾹 눌러 주세요 👆', 1500); }
+    holding = false;
+    rb.textContent = LABEL;
   }
-  rb.addEventListener('pointerup', cancel);
-  rb.addEventListener('pointerleave', cancel);
-  rb.addEventListener('pointercancel', cancel);
+  rb.addEventListener('pointerup', release);
+  rb.addEventListener('pointercancel', release);
+  // pointerleave 취소는 제거: 손가락 미세 이동에도 롱프레스 유지
 })();
 document.getElementById('reportClose').addEventListener('click', closeReport);
+// 어두운 바깥 영역을 눌러도 리포트 닫기
+document.getElementById('reportScreen').addEventListener('click', e=>{ if(e.target.id === 'reportScreen') closeReport(); });
 document.getElementById('controlsHint').innerHTML = IS_TOUCH
   ? '🕹️ 왼쪽 조이스틱 이동 · 오른쪽 버튼 점프 · 👆 화면을 밀어 시점 돌리기'
   : '⌨️ WASD/방향키 이동 · 스페이스 점프 · 🖱️ 마우스로 시점 돌리기';
