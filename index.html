@@ -120,6 +120,13 @@
     font-weight:800;font-size:13px;color:#8494a1;cursor:pointer;box-shadow:0 3px 0 rgba(37,58,75,.5);}
   .optChip.on{background:var(--leaf);color:#fff;}
   .optChip:active{transform:translateY(2px);box-shadow:0 1px 0 rgba(37,58,75,.5);}
+  /* 오늘의 출석·목표 카드 */
+  #dailyCard{display:flex;justify-content:center;align-items:center;gap:10px;flex-wrap:wrap;
+    margin:2px 0 14px;font-weight:800;font-size:14px;color:#5a6b78;}
+  #dailyCard .dchip{background:#FFF3D6;border:2.5px solid var(--ink);border-radius:12px;padding:5px 12px;color:#7a5b00;
+    box-shadow:0 3px 0 rgba(37,58,75,.5);}
+  #dailyCard .dchip.goal{background:#E7F6EE;color:#1f7a4d;}
+  #dailyCard .dchip.done{background:var(--leaf);color:#fff;}
   /* 배움 카드 (오답 도우미) */
   #learnPop{
     position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(12px);
@@ -315,6 +322,7 @@
     <div class="mascot">🏝️</div>
     <h1>점프 퀴즈 아일랜드</h1>
     <div class="tag" id="tagLine">뛰고 · 풀고 · 모으자!</div>
+    <div id="dailyCard"></div>
     <div class="modeRow">
       <button class="modePill on" data-m="island">🏝️ 섬</button>
       <button class="modePill" data-m="tower">🗼 타워</button>
@@ -344,7 +352,7 @@
     </div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v4.1</div>
+    <div id="verTag">v4.2</div>
   </div>
 </div>
 
@@ -433,6 +441,8 @@
 <div id="keysHint" class="card"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>/* 1차 CDN이 막히면 2차 CDN으로 동기 재시도 (백지 화면 방지) */
+window.THREE || document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"><\/script>');</script>
 <script>
 /* =========================================================
    점프 퀴즈 아일랜드 v1
@@ -550,6 +560,8 @@ function migrateReport(r){
   if(!r || !r.sub) return newReport();
   if(!r.concept) r.concept = {};
   if(!r.review) r.review = [];
+  const today = ymd();
+  r.review.forEach(x => { if(x.box == null) x.box = 1; if(x.due == null) x.due = today; });   // 간격반복 필드 보강
   return r;
 }
 function bumpConcept(q, ok){
@@ -558,14 +570,37 @@ function bumpConcept(q, ok){
   const c = report.concept[key] || (report.concept[key] = {ok:0,wrong:0});
   if(ok) c.ok++; else c.wrong++;
 }
-// 복습 큐에 추가(3D 참조 없는 순수 데이터만, 중복은 최신으로 갱신)
+// 복습 큐에 추가(3D 참조 없는 순수 데이터만, 중복은 최신으로 갱신) — 간격반복 box/due 포함
 function pushReview(q){
   const slim = { sub:q.sub, concept:q.concept, conceptName:q.conceptName, chip:q.chip, color:q.color,
                  main:q.main, hint:q.hint, big:q.big, answers:q.answers.slice(), correct:q.correct,
-                 explain:q.explain, read:q.read };
-  report.review = (report.review || []).filter(x => x.main !== q.main);
-  report.review.unshift(slim);
-  if(report.review.length > 40) report.review.length = 40;
+                 explain:q.explain, read:q.read, box:1, due:ymd() };   // 틀림 = 1상자, 오늘 다시
+  const list = (report.review || []).filter(x => x.main !== q.main);
+  list.unshift(slim);
+  if(list.length > 40){   // 넘치면 가장 덜 급한 것(due 늦고 box 높음) 버림
+    list.sort((a,b)=> (a.due||'').localeCompare(b.due||'') || (a.box||1)-(b.box||1));
+    list.length = 40;
+  }
+  report.review = list;
+}
+// ---------- 간격 반복(Leitner) & 날짜(출석/일일목표) ----------
+const LEITNER_DAYS = { 1:1, 2:2, 3:4, 4:7, 5:15 };   // 상자별 다음 복습까지 일수
+function ymd(d){ d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function reviewDueCount(){ const t = ymd(); return (report.review || []).filter(x => (x.due || '') <= t).length; }
+function defaultDaily(){ return { day:'', streak:0, count:0, goal:10, goalDone:false, playedDay:'' }; }
+let daily = defaultDaily();
+function migrateDaily(x){ const d = defaultDaily(); if(x && typeof x === 'object'){ for(const k in d) if(k in x) d[k] = x[k]; } return d; }
+// 날짜 롤오버 + (playing이면) 출석 연속 갱신
+function touchDaily(playing){
+  const today = ymd();
+  if(daily.day !== today){ daily.day = today; daily.count = 0; daily.goalDone = false; }   // 새 날 = 오늘 카운트 초기화
+  if(playing && daily.playedDay !== today){
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    daily.streak = (daily.playedDay === ymd(y)) ? (daily.streak || 0) + 1 : 1;   // 어제 놀았으면 연속++, 아니면 1
+    daily.playedDay = today;
+    markDirty();
+  }
+  updateDailyCard();
 }
 let report = newReport();
 let best = {};
@@ -598,16 +633,36 @@ async function storeSet(k, v){
 }
 function profKey(g){ return 'jqi-save-' + g; }
 function markDirty(){ dirty = true; }
+function buildSaveData(){
+  return { v:4, coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared,
+           towerCleared: towerCleared, invasionCleared: invasionCleared, report: report, best: best, daily: daily };
+}
 async function saveProfile(){
   dirty = false; lastSaveT = performance.now();
-  const data = { coins: coinCount, owned: Array.from(owned), equip: equip, cleared: cleared, towerCleared: towerCleared, invasionCleared: invasionCleared, report: report, best: best };
-  await storeSet(profKey(GRADE), JSON.stringify(data));
+  const json = JSON.stringify(buildSaveData());
+  await storeSet(profKey(GRADE), json);
+  await storeSet(profKey(GRADE) + '.bak', json);   // 손상 대비 그림자 백업
+}
+// 앱 전환·탭 닫기 시 즉시(동기) 저장 — 방금 모은 코인이 날아가지 않게
+function flushSave(){
+  if(!dirty) return;
+  try{
+    const json = JSON.stringify(buildSaveData());
+    MEM[profKey(GRADE)] = json;
+    if(typeof localStorage !== 'undefined'){ localStorage.setItem(profKey(GRADE), json); localStorage.setItem(profKey(GRADE) + '.bak', json); }
+    if(window.storage && window.storage.set){ window.storage.set(profKey(GRADE), json); }   // 비동기 best-effort
+    dirty = false;
+  }catch(e){}
 }
 async function loadProfile(g){
   GRADE = g;
   let d = null;
-  const raw = await storeGet(profKey(g));
+  let raw = await storeGet(profKey(g));
   if(raw){ try{ d = JSON.parse(raw); }catch(e){ d = null; } }
+  if(!d){   // 본 저장이 없거나 손상 → 백업에서 복구
+    const bak = await storeGet(profKey(g) + '.bak');
+    if(bak){ try{ d = JSON.parse(bak); }catch(e){ d = null; } }
+  }
   coinCount = (d && d.coins) || 0;
   owned = new Set((d && d.owned) || []);
   equip = (d && d.equip) || { hat:null, pet:null, shirt:null };
@@ -619,6 +674,8 @@ async function loadProfile(g){
   while(invasionCleared.length < 3) invasionCleared.push(false);
   best = (d && d.best) || {};
   report = (d && d.report && d.report.sub) ? migrateReport(d.report) : newReport();
+  daily = migrateDaily(d && d.daily);
+  touchDaily(false);   // 새 날이면 오늘 카운트 초기화 + 카드 표시(연속은 플레이 시 갱신)
   if(STAGE > 0 && !stageUnlocked(STAGE)) STAGE = 0;
   applyEquips();
   updateWallet();
@@ -803,6 +860,20 @@ function updateWallet(){
   el('pullBtn').disabled = pulling || coinCount < PULL_COST;
   el('pull10Btn').disabled = pulling || coinCount < PULL10_COST;
   updateHUD();
+}
+// 시작화면 '오늘의 출석·목표' 카드 + 복습 버튼 배지
+function updateDailyCard(){
+  const dc = el('dailyCard');
+  if(dc){
+    const s = daily.streak || 0;
+    const streakChip = '<span class="dchip">🔥 ' + s + '일 연속</span>';
+    const goalChip = daily.goalDone
+      ? '<span class="dchip done">🎯 오늘 목표 완료! ✅</span>'
+      : '<span class="dchip goal">🎯 오늘 ' + (daily.count || 0) + '/' + daily.goal + '</span>';
+    dc.innerHTML = streakChip + goalChip;
+  }
+  const rc = el('reviewChip');
+  if(rc){ const n = reviewDueCount(); rc.textContent = n > 0 ? ('📒 복습 ' + n + '개') : '📒 복습하기'; }
 }
 function renderCat(cat, gridId, cntId){
   const items = REGISTRY.filter(x=>x.cat===cat);
@@ -2561,6 +2632,7 @@ function startGame(){
   el('crosshair').style.display = inv ? 'block' : 'none';
   el('fireBtn').style.display = (inv && IS_TOUCH) ? 'flex' : 'none';
   runT0 = performance.now();
+  touchDaily(true);   // 출석 연속 갱신(하루 첫 플레이)
   STATE = 'play';
   el('startScreen').style.display = 'none';
   el('endScreen').style.display = 'none';
@@ -2606,14 +2678,19 @@ function goHome(){
   clearCombat();
   hideBanner();
   REVIEW_MODE = false;
+  updateDailyCard();   // 방금 플레이 반영(오늘 목표 진행·복습 남은 개수)
   el('startScreen').style.display = 'flex';
 }
-// 복습 아일랜드: 틀렸던 문제(복습 큐)만 모아 다시 도전
+// 복습 아일랜드: 복습 예정일이 된 문제부터 모아 다시 도전 (간격반복)
 function startReviewRun(){
   const queue = report.review || [];
   if(!queue.length){ toast('복습할 문제가 없어요! 다 잘했어요 👏', 1600); return; }
+  const today = ymd();
+  const due = queue.filter(x => (x.due || '') <= today);   // 오늘 복습할 것 우선
+  const feed = (due.length ? due : queue).slice();
+  feed.sort((a,b)=> (a.due || '').localeCompare(b.due || ''));   // 가장 오래된(급한) 것부터
+  reviewFeed = feed;
   REVIEW_MODE = true;
-  reviewFeed = queue.slice();
   MODE = 'island';
   document.querySelectorAll('.modePill').forEach(x=>x.classList.toggle('on', x.dataset.m === 'island'));
   STAGE = 0;
@@ -2707,8 +2784,20 @@ function answerDoor(gate, idx){
     stats[subKey].ok++;
     report.sub[subKey].ok++;
     bumpConcept(gate.q, true);
-    if(REVIEW_MODE){ report.review = (report.review||[]).filter(x => x.main !== gate.q.main); }  // 복습에서 맞히면 큐에서 제거
+    // 복습에서 맞히면 삭제 대신 다음 상자로 승급(간격반복): 다음 복습일을 뒤로 미룸
+    if(REVIEW_MODE && report.review.indexOf(gate.q) >= 0){
+      gate.q.box = Math.min(5, (gate.q.box || 1) + 1);
+      const nd = new Date(); nd.setDate(nd.getDate() + LEITNER_DAYS[gate.q.box]);
+      gate.q.due = ymd(nd);
+    }
     coinCount += 5; runCoins += 5; markDirty();
+    // 오늘의 목표(정답 개수) 진행 + 달성 보상(하루 1회)
+    daily.count = (daily.count || 0) + 1;
+    if(!daily.goalDone && daily.count >= daily.goal){
+      daily.goalDone = true; coinCount += 15; runCoins += 15;
+      setTimeout(()=>toast('🎯 오늘의 목표 달성! +15코인 🎉', 1600), 700);
+    }
+    updateDailyCard();
     sfx.correct();
     runStreak++;
     toast(runStreak >= 3 ? ('🔥 ' + runStreak + '연속! ' + pick(GOOD)) : pick(GOOD), 1400);
@@ -3217,15 +3306,32 @@ el('adaptChip').addEventListener('click', ()=>{ audioInit(); ADAPT = !ADAPT; syn
 el('reviewChip').addEventListener('click', ()=>{ audioInit(); startReviewRun(); });
 
 // ---------- 시작 ----------
-init3D();
-buildPlayer();
-buildDeco(0);
-buildCourse(1, 0);       // 메뉴 배경용
-pX = 0; pY = 0.05; pZ = 0;
-loadProfile(1);
-loadOpts();
-clock = new THREE.Clock();
-renderer.setAnimationLoop(animate);
+function showOfflineHelp(){
+  const o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#7FD0F0;color:#253A4B;font:800 20px system-ui,sans-serif;text-align:center;padding:24px;';
+  o.innerHTML = '<div style="font-size:56px">📡</div><div>인터넷에 연결되면 놀 수 있어요!</div>' +
+    '<div style="font-size:15px;font-weight:700;color:#3a5566">와이파이를 켜고 다시 열어 주세요 🌱</div>' +
+    '<button id="jqiRetry" style="margin-top:6px;padding:12px 26px;font:800 18px system-ui;border:3px solid #253A4B;border-radius:16px;background:#fff;box-shadow:0 4px 0 #253A4B;cursor:pointer">다시 시도 🔄</button>';
+  document.body.appendChild(o);
+  document.getElementById('jqiRetry').addEventListener('click', ()=>location.reload());
+}
+if(typeof THREE !== 'undefined'){
+  init3D();
+  buildPlayer();
+  buildDeco(0);
+  buildCourse(1, 0);       // 메뉴 배경용
+  pX = 0; pY = 0.05; pZ = 0;
+  loadProfile(1);
+  loadOpts();
+  clock = new THREE.Clock();
+  renderer.setAnimationLoop(animate);
+  // 앱 전환·탭 닫기 순간 저장 플러시 (모은 코인·진행 보호)
+  window.addEventListener('pagehide', flushSave);
+  window.addEventListener('beforeunload', flushSave);
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushSave(); });
+} else {
+  showOfflineHelp();   // three.js 두 CDN 모두 실패 → 백지 대신 안내
+}
 </script>
 </body>
 </html>
