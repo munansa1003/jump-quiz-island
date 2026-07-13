@@ -344,7 +344,7 @@
     </div>
     <div id="reportRow"><button class="btn ghost small" id="reportBtn">📊 부모님 리포트 (꾹)</button></div>
     <div id="controlsHint"></div>
-    <div id="verTag">v4.0</div>
+    <div id="verTag">v4.1</div>
   </div>
 </div>
 
@@ -1392,6 +1392,7 @@ let invuln = 0, enemySpawnT = 0, fireCool = 0, enemiesBeat = 0;
 const DEF_PITCH = 0.56, CAM_DIST = 10.2;
 let camDist = CAM_DIST;   // 실제 카메라 거리(게이트 근처에서 뒤로 빠져 문 전체가 보이게 이징)
 let camYaw = 0, camPitch = DEF_PITCH;   // camYaw: 0이면 골(-Z) 방향을 바라봄
+let focX = 0, focY = 0, focZ = 0;       // 스무딩된 카메라 주시점(점프 상하 출렁·급전환 whip 완화)
 let lockCanvas = null;                  // 포인터락 대상 캔버스 (init3D에서 지정)
 
 const IS_TOUCH = ('ontouchstart' in window) || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
@@ -1638,6 +1639,12 @@ let petSpin = false, petAmp = 0.12, petBob = Math.random()*6;
 const P_R = 0.45, P_H = 2.2;
 const SPEED = 7.2, JUMP_V = 11.6, GRAV = 28;
 let G_CUR = GRAV;
+// 이동 느낌(로블록스식): 지상=선형 가감속(정지거리 유계로 발판 정밀 유지), 공중=관성 보존
+const ACCEL_G = 60;        // 지상 가속 rate(m/s²): 0→7.2까지 약 0.12s (무게감)
+let   DECEL_G = 130;       // 지상 감속 rate: 정지거리 7.2²/(2·130)≈0.20m (< 유예밴드 0.315m) — 모드별 재설정
+const K_AIR = 8;           // 공중 능동 조향(1/s)
+const K_AIR_RELEASE = 0;   // 공중 무입력 = 수평 관성 보존
+const MOVE_EPS = 0.05;     // 이동 중 판정 임계
 
 function buildPlayer(){
   player = new THREE.Group();
@@ -2538,6 +2545,7 @@ function startGame(){
   GRADE = Number(document.querySelector('.gradePill.on').dataset.g);
   // 타워는 일정한 중력으로 통일 (테마별 저중력이면 점프가 발판을 넘어가버림)
   G_CUR = (MODE === 'tower') ? 26 : STAGES[STAGE].grav;
+  DECEL_G = (MODE === 'tower') ? 170 : 130;   // 좁은 나선은 정지거리를 더 조여(≈0.15m) 정밀하게
   buildDeco(STAGE);
   buildCourse(GRADE, STAGE);
   runCoins = 0;
@@ -2545,6 +2553,7 @@ function startGame(){
   runStreak = 0;
   checkpoint = { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z };
   pX = spawnPos.x; pY = spawnPos.y; pZ = spawnPos.z; vX=vY=vZ=0; onGround = true; standOn = platforms[0];
+  focX = pX; focY = pY; focZ = pZ;   // 주시점 초기화(시작 시 카메라 미끄러짐 방지)
   const inv = (MODE === 'invasion');
   camYaw = 0; camPitch = inv ? 0.42 : DEF_PITCH; camDist = CAM_DIST;   // 침공은 조준 위해 시점을 조금 평평하게
   // 침공 모드 전투 초기화
@@ -2580,6 +2589,7 @@ function respawn(){
   stats.falls++;
   pX = checkpoint.x; pY = checkpoint.y; pZ = checkpoint.z;
   vX=vY=vZ=0; onGround = false; standOn = null;
+  focX = pX; focY = pY; focZ = pZ;   // 부활 시 카메라가 레벨을 가로질러 미끄러지지 않게
   sfx.fall();
   toast('괜찮아! 다시 가보자 🙌', 1100);
 }
@@ -2848,8 +2858,24 @@ function update(dt){
     let iz = f*fwdZ + r*rgtZ;
     const il = Math.hypot(ix, iz);
     if(il > 1){ ix/=il; iz/=il; }
-    vX = ix * SPEED;
-    vZ = iz * SPEED;
+    // 목표 수평 속도로 '가감속'하며 접근 (즉시 스냅 X → 무게감/자연스러움)
+    const tX = ix * SPEED, tZ = iz * SPEED;
+    const moving = il > MOVE_EPS;
+    if(onGround){
+      // 지상: 선형 접근(등가속). 정지/역입력은 크리스프 감속, 정방향은 부드러운 가속.
+      const opposing = (tX*vX + tZ*vZ) < 0;
+      const rate = (!moving || opposing) ? DECEL_G : ACCEL_G;
+      const step = rate * dt;
+      const dvx = tX - vX, dvz = tZ - vZ;
+      const dl = Math.hypot(dvx, dvz);
+      if(dl <= step || dl === 0){ vX = tX; vZ = tZ; }        // 목표에 정확히 도달(잔류 드리프트 0)
+      else { const s = step/dl; vX += dvx*s; vZ += dvz*s; }
+    } else {
+      // 공중: 무입력이면 관성 보존(k=0), 능동 입력만 약하게 조향. dt-독립 지수식.
+      const a = 1 - Math.exp(-(moving ? K_AIR : K_AIR_RELEASE) * dt);
+      vX += (tX - vX) * a;
+      vZ += (tZ - vZ) * a;
+    }
 
     // 점프 (코요테 + 버퍼)
     if(onGround) coyote = 0.12; else coyote -= dt;
@@ -2858,6 +2884,7 @@ function update(dt){
       vY = JUMP_V;
       onGround = false; standOn = null;
       coyote = 0; jumpBuf = 0;
+      if(moving){ vX = tX; vZ = tZ; }   // 안전장치①: 도약 순간 목표 속도로 이륙 → 점프 도달거리 보존
       sfx.jump();
     }
 
@@ -2883,6 +2910,7 @@ function update(dt){
            Math.abs(pX - p.x) <= p.hw + P_R*0.7 &&
            Math.abs(pZ - p.z) <= p.hd + P_R*0.7){
           pY = p.top; vY = 0; onGround = true; standOn = p;
+          if(!moving){ vX = 0; vZ = 0; }   // 안전장치②: 입력 없이 착지하면 즉시 정지 → 좁은 발판에서 안 미끄러짐
           break;
         }
       }
@@ -2959,7 +2987,7 @@ function update(dt){
       let diff = target - player.rotation.y;
       while(diff > Math.PI) diff -= Math.PI*2;
       while(diff < -Math.PI) diff += Math.PI*2;
-      player.rotation.y += diff * Math.min(1, 12*dt);
+      player.rotation.y += diff * (1 - Math.exp(-14*dt));   // dt-독립 회전 이징
       walkPhase += dt * 11;
     } else {
       walkPhase *= 0.8;
@@ -3049,12 +3077,12 @@ function update(dt){
       const need = 5.5 / Math.max(0.25, hHalfTan);                                // 게이트 반폭이 담기는 거리(여유 포함)
       distTarget = Math.max(15.0, need / Math.cos(camPitch));
     }
-    camDist += (distTarget - camDist) * Math.min(1, 4*dt);
+    camDist += (distTarget - camDist) * (1 - Math.exp(-4*dt));
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const cx = pX + camDist * cp * Math.sin(camYaw);
     const cz = pZ + camDist * cp * Math.cos(camYaw);
     const cy = pY + camDist * sp + 0.6;
-    const k = Math.min(1, 10*dt);
+    const k = 1 - Math.exp(-12*dt);      // dt-독립 이징(프레임레이트 무관)
     camera.position.x += (cx - camera.position.x) * k;
     camera.position.y += (cy - camera.position.y) * k;
     camera.position.z += (cz - camera.position.z) * k;
@@ -3063,8 +3091,12 @@ function update(dt){
       camera.position.x += (Math.random()-0.5)*shake*0.7;
       camera.position.y += (Math.random()-0.5)*shake*0.7;
     }
-    let lx = pX, ly = pY + 1.7, lz = pZ;
-    if(nearGate){ lx = pX + (nearGate.cx - pX)*0.4; lz = pZ + (nearGate.cz - pZ)*0.4; ly = pY + 2.2; }
+    // 주시점을 부드럽게: 세로(점프 출렁)는 소프트, 수평은 타이트 → 눈-조준 whip/bob 제거
+    focX += (pX - focX) * (1 - Math.exp(-18*dt));
+    focZ += (pZ - focZ) * (1 - Math.exp(-18*dt));
+    focY += (pY - focY) * (1 - Math.exp(-8*dt));
+    let lx = focX, ly = focY + 1.7, lz = focZ;
+    if(nearGate){ lx = focX + (nearGate.cx - focX)*0.4; lz = focZ + (nearGate.cz - focZ)*0.4; ly = focY + 2.2; }
     camera.lookAt(lx, ly, lz);
   }
 
